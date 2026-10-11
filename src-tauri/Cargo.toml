@@ -1,0 +1,30 @@
+[package]
+name = "txgate"
+version = "0.1.0"
+description = "Local JSON-RPC gate that holds every wallet transaction until you approve it"
+edition = "2021"
+license = "GPL-3.0"
+
+[lib]
+name = "txgate_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# macOS names an unbundled app (as under `tauri dev`) after its executable.
+[[bin]]
+name = "TxGate"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+txgate-core = { path = "../crates/txgate-core" }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-notification = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["sync", "macros"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tauri-plugin-single-instance = "2"

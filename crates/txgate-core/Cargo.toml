@@ -1,0 +1,32 @@
+[package]
+name = "txgate-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+alloy-consensus = { version = "2.5.0", features = ["k256", "serde"] }
+alloy-eips = { version = "2.5.0", features = ["k256", "serde"] }
+alloy-primitives = { version = "1.7.3", features = ["serde"] }
+alloy-rlp = "0.3.16"
+alloy-sol-types = "1.7.3"
+async-trait = "0.1.92"
+axum = "0.8.9"
+futures = "0.3.34"
+hex = "0.4.3"
+parking_lot = "0.12.5"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls", "http2"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.21"
+tokio = { version = "1.53.2", features = ["full"] }
+toml = "1.1.8"
+tracing = "0.1.44"
+
+[dev-dependencies]
+tempfile = "3"
+# Enables the fake upstream for integration tests.
+txgate-core = { path = ".", features = ["test-util"] }
+
+[features]
+test-util = []
