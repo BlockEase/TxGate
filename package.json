@@ -1,0 +1,15 @@
+{
+  "name": "txgate",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "setup": "npm install && npm --prefix ui install",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "test": "cargo test --workspace && npm --prefix ui run build",
+    "wallet:sim": "node scripts/simulate-wallet.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.1"
+  }
+}

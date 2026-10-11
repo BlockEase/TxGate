@@ -1,0 +1,194 @@
+//! JSON-RPC envelope handling and method classification.
+
+use alloy_primitives::Bytes;
+use serde_json::{json, Value};
+
+/// Methods that cause a transaction to be broadcast and therefore must be held for approval.
+pub const SEND_METHODS: &[&str] = &[
+    "eth_sendRawTransaction",
+    "eth_sendRawTransactionSync",
+    "eth_sendRawTransactionConditional",
+    "eth_sendTransaction",
+    "eth_sendBundle",
+    "eth_sendPrivateTransaction",
+];
+
+pub const ESTIMATE_METHOD: &str = "eth_estimateGas";
+
+/// JSON-RPC error code returned to the wallet when the user rejects a transaction
+/// (EIP-1193 "User Rejected Request").
+pub const USER_REJECTED_CODE: i64 = 4001;
+pub const REJECTED_MESSAGE: &str = "Rejected by TxGate";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Category {
+    Read,
+    Estimate,
+    Send,
+}
+
+pub fn classify(method: &str) -> Category {
+    if SEND_METHODS.contains(&method) {
+        Category::Send
+    } else if method == ESTIMATE_METHOD {
+        Category::Estimate
+    } else {
+        Category::Read
+    }
+}
+
+/// A single JSON-RPC call, parsed leniently: unknown fields are ignored and the
+/// original value is kept so it can be forwarded byte-for-byte equivalent.
+#[derive(Debug, Clone)]
+pub struct Call {
+    pub id: Value,
+    pub method: String,
+    pub params: Value,
+    pub raw: Value,
+}
+
+impl Call {
+    pub fn parse(mut value: Value) -> Result<Self, Value> {
+        let id = value.get("id").cloned().unwrap_or(Value::Null);
+        // Some clients omit the version; strict upstreams reject such requests.
+        if let Some(obj) = value.as_object_mut()
+            && !obj.contains_key("jsonrpc")
+        {
+            obj.insert("jsonrpc".into(), json!("2.0"));
+        }
+        let Some(method) = value.get("method").and_then(Value::as_str) else {
+            return Err(error_response(id, -32600, "Invalid Request"));
+        };
+        Ok(Self {
+            id: id.clone(),
+            method: method.to_string(),
+            params: value.get("params").cloned().unwrap_or(Value::Array(vec![])),
+            raw: value,
+        })
+    }
+
+    pub fn category(&self) -> Category {
+        classify(&self.method)
+    }
+
+    /// The n-th positional parameter.
+    pub fn param(&self, n: usize) -> Option<&Value> {
+        self.params.as_array().and_then(|a| a.get(n))
+    }
+}
+
+pub fn error_response(id: Value, code: i64, message: &str) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
+}
+
+pub fn rejected_response(id: Value) -> Value {
+    error_response(id, USER_REJECTED_CODE, REJECTED_MESSAGE)
+}
+
+/// Rewrites the `id` of an upstream response so it matches the wallet's request.
+/// Needed when one upstream response is fanned out to several waiting requests.
+pub fn with_id(mut response: Value, id: &Value) -> Value {
+    if let Some(obj) = response.as_object_mut() {
+        obj.insert("id".into(), id.clone());
+    }
+    response
+}
+
+/// What a sending method asks to broadcast.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SendPayload {
+    /// One or more signed, RLP/EIP-2718 encoded transactions.
+    Signed(Vec<Bytes>),
+    /// An unsigned transaction object (`eth_sendTransaction`), signed by the node.
+    Unsigned(Value),
+}
+
+/// Extracts the transaction(s) from a sending call.
+pub fn send_payload(call: &Call) -> Result<SendPayload, String> {
+    let first = call.param(0).ok_or("missing params[0]")?;
+    let hex_tx = |v: &Value| -> Result<Bytes, String> {
+        let s = v.as_str().ok_or("transaction is not a hex string")?;
+        s.parse::<Bytes>().map_err(|e| format!("invalid transaction hex: {e}"))
+    };
+    match call.method.as_str() {
+        "eth_sendRawTransaction" | "eth_sendRawTransactionSync" | "eth_sendRawTransactionConditional" => {
+            Ok(SendPayload::Signed(vec![hex_tx(first)?]))
+        }
+        "eth_sendPrivateTransaction" => {
+            let tx = first.get("tx").ok_or("missing params[0].tx")?;
+            Ok(SendPayload::Signed(vec![hex_tx(tx)?]))
+        }
+        "eth_sendBundle" => {
+            let txs = first.get("txs").and_then(Value::as_array).ok_or("missing params[0].txs")?;
+            let txs = txs.iter().map(hex_tx).collect::<Result<Vec<_>, _>>()?;
+            if txs.is_empty() {
+                return Err("bundle has no transactions".into());
+            }
+            Ok(SendPayload::Signed(txs))
+        }
+        "eth_sendTransaction" => Ok(SendPayload::Unsigned(first.clone())),
+        other => Err(format!("{other} is not a sending method")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn call(v: Value) -> Call {
+        Call::parse(v).unwrap()
+    }
+
+    #[test]
+    fn classifies_methods() {
+        assert_eq!(classify("eth_sendRawTransaction"), Category::Send);
+        assert_eq!(classify("eth_sendBundle"), Category::Send);
+        assert_eq!(classify("eth_estimateGas"), Category::Estimate);
+        assert_eq!(classify("eth_call"), Category::Read);
+    }
+
+    #[test]
+    fn missing_jsonrpc_version_is_filled_in_for_the_upstream() {
+        let c = call(json!({"id": 1, "method": "eth_chainId"}));
+        assert_eq!(c.raw["jsonrpc"], "2.0");
+    }
+
+    #[test]
+    fn request_without_method_is_invalid() {
+        let err = Call::parse(json!({"jsonrpc":"2.0","id":7})).unwrap_err();
+        assert_eq!(err["error"]["code"], -32600);
+        assert_eq!(err["id"], 7);
+    }
+
+    #[test]
+    fn extracts_raw_transaction_variants() {
+        let raw = json!({"id":1,"method":"eth_sendRawTransaction","params":["0x01ab"]});
+        assert_eq!(send_payload(&call(raw)).unwrap(), SendPayload::Signed(vec![Bytes::from(vec![1, 0xab])]));
+
+        let private = json!({"id":1,"method":"eth_sendPrivateTransaction","params":[{"tx":"0x02"}]});
+        assert_eq!(send_payload(&call(private)).unwrap(), SendPayload::Signed(vec![Bytes::from(vec![2])]));
+
+        let bundle = json!({"id":1,"method":"eth_sendBundle","params":[{"txs":["0x01","0x02"],"blockNumber":"0x1"}]});
+        let SendPayload::Signed(txs) = send_payload(&call(bundle)).unwrap() else { panic!() };
+        assert_eq!(txs.len(), 2);
+
+        let unsigned = json!({"id":1,"method":"eth_sendTransaction","params":[{"from":"0x1"}]});
+        assert!(matches!(send_payload(&call(unsigned)).unwrap(), SendPayload::Unsigned(_)));
+    }
+
+    #[test]
+    fn rejects_malformed_send_params() {
+        let bad = json!({"id":1,"method":"eth_sendRawTransaction","params":[42]});
+        assert!(send_payload(&call(bad)).is_err());
+        let empty = json!({"id":1,"method":"eth_sendBundle","params":[{"txs":[]}]});
+        assert!(send_payload(&call(empty)).is_err());
+    }
+
+    #[test]
+    fn rejected_response_uses_4001() {
+        let r = rejected_response(json!(3));
+        assert_eq!(r["error"]["code"], 4001);
+        assert_eq!(r["error"]["message"], "Rejected by TxGate");
+    }
+}
