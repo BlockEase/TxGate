@@ -19,8 +19,12 @@ pub struct Config {
     pub providers: ProviderKeys,
     pub tenderly: TenderlyConfig,
     pub logging: LoggingConfig,
+    pub safe: SafeConfig,
     /// How far back an `eth_estimateGas` preview is considered when matching a send.
     pub preview_window_secs: u64,
+    /// Interface language (`en`, `zh-CN`, `es`, `ru`, `pt`); `None` follows the system.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 impl Default for Config {
@@ -36,7 +40,9 @@ impl Default for Config {
             providers: ProviderKeys::default(),
             tenderly: TenderlyConfig::default(),
             logging: LoggingConfig::default(),
+            safe: SafeConfig::default(),
             preview_window_secs: 600,
+            language: None,
         }
     }
 }
@@ -134,6 +140,38 @@ pub enum LogMode {
 #[serde(default)]
 pub struct LoggingConfig {
     pub mode: LogMode,
+}
+
+/// A Safe multisig the user wants watched.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WatchedSafe {
+    pub chain_id: u64,
+    pub address: alloy_primitives::Address,
+    #[serde(default)]
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SafeConfig {
+    pub watched: Vec<WatchedSafe>,
+    /// Use the Safe Transaction Service to look up queued transactions and
+    /// what an `approveHash` approves. Everything it returns is re-hashed and
+    /// decoded locally.
+    pub service_enabled: bool,
+    /// Optional Safe API key; without one the public service is rate limited.
+    pub service_api_key: String,
+    /// Base URL of a self-hosted Transaction Service; empty uses
+    /// `https://api.safe.global/tx-service/<chain>`.
+    pub service_url: String,
+    /// Seconds between checks of the watched Safes.
+    pub poll_secs: u64,
+}
+
+impl Default for SafeConfig {
+    fn default() -> Self {
+        Self { watched: Vec::new(), service_enabled: true, service_api_key: String::new(), service_url: String::new(), poll_secs: 60 }
+    }
 }
 
 /// Concrete upstream URLs for one network.

@@ -1,6 +1,6 @@
 [package]
 name = "txgate"
-version = "0.1.0"
+version = "0.1.1"
 description = "Local JSON-RPC gate that holds every wallet transaction until you approve it"
 edition = "2021"
 license = "GPL-3.0"

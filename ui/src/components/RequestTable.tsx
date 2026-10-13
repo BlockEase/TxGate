@@ -1,11 +1,8 @@
 // Request list shared by the live monitor and the history view.
 
 import type { Config, RequestRecord } from "../api";
-import { clock, dateTime, networkName, STATUS_LABEL, STATUS_TAG } from "../format";
-
-const PREVIEW_HINT =
-  "The wallet estimated gas for this transaction, which it usually does right before asking you to sign. TxGate compares it with the transaction that follows.";
-const SEND_HINT = "A transaction to broadcast. TxGate holds it until you approve it.";
+import { clock, dateTime, networkName, statusLabel, STATUS_TAG } from "../format";
+import { t } from "../i18n";
 
 export function RequestTable({
   rows,
@@ -24,12 +21,12 @@ export function RequestTable({
     <table className="table" style={{ fontSize: 13 }}>
       <thead>
         <tr>
-          <th style={{ width: showDate ? 150 : 76 }}>Time</th>
-          <th style={{ width: 96 }}>Network</th>
-          <th style={{ width: 236 }}>Method</th>
-          <th>Summary</th>
-          <th style={{ width: 140 }}>Status</th>
-          <th style={{ width: 70, textAlign: "right" }}>Time taken</th>
+          <th style={{ width: showDate ? 158 : 76 }}>{t("table.time")}</th>
+          <th className="col-network" style={{ width: 110 }}>{t("table.network")}</th>
+          <th className="col-method">{t("table.method")}</th>
+          <th>{t("table.summary")}</th>
+          <th style={{ width: 132 }}>{t("table.status")}</th>
+          <th className="col-duration nowrap" style={{ width: 90, textAlign: "right" }}>{t("table.duration")}</th>
         </tr>
       </thead>
       <tbody>
@@ -46,14 +43,18 @@ export function RequestTable({
                 if (e.key === "Enter") onSelect(r.id);
               }}
             >
-              <td className="text-muted num">{showDate ? dateTime(r.ts_ms) : clock(r.ts_ms)}</td>
-              <td className="ellipsis">{networkName(config, r.chain_id)}</td>
-              <td>
+              <td className="text-muted num nowrap">{showDate ? dateTime(r.ts_ms) : clock(r.ts_ms)}</td>
+              <td className="ellipsis col-network" title={networkName(config, r.chain_id)}>
+                {networkName(config, r.chain_id)}
+              </td>
+              <td className="clip">
                 <div className={`method ${hot ? "hot" : ""}`}>
-                  <span>{r.method}</span>
+                  <span className="method-name" title={r.method}>
+                    {r.method}
+                  </span>
                   {hot && (
-                    <span className="tag tag-outline flag" title={r.category === "send" ? SEND_HINT : PREVIEW_HINT}>
-                      {r.category === "send" ? "Transaction" : "Preview"}
+                    <span className="tag tag-outline flag" title={r.category === "send" ? t("table.send_hint") : t("table.preview_hint")}>
+                      {r.category === "send" ? t("table.flag_send") : t("table.flag_preview")}
                     </span>
                   )}
                 </div>
@@ -62,9 +63,9 @@ export function RequestTable({
                 {r.summary}
               </td>
               <td style={{ whiteSpace: "nowrap" }}>
-                <span className={STATUS_TAG[r.status]}>{STATUS_LABEL[r.status]}</span>
+                <span className={STATUS_TAG[r.status]}>{statusLabel(r.status)}</span>
               </td>
-              <td className="text-muted num" style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+              <td className="text-muted num col-duration" style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                 {r.duration_ms === null ? "—" : `${r.duration_ms.toLocaleString("en-US")} ms`}
               </td>
             </tr>

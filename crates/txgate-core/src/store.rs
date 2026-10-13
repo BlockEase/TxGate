@@ -7,8 +7,13 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use alloy_primitives::Address;
+
+use crate::decode::Severity;
 use crate::jsonrpc::Category;
 use crate::record::{name_of, parse_name, Decision, RequestRecord, Status};
+use crate::safe_state::SafeState;
+use crate::safe_watch::{Finding, SafeAlert};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -74,6 +79,26 @@ CREATE TABLE IF NOT EXISTS decisions (
     decision   TEXT NOT NULL,
     ts_ms      INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS safe_snapshots (
+    chain_id INTEGER NOT NULL,
+    safe     TEXT NOT NULL,
+    state    TEXT NOT NULL,
+    seen     TEXT NOT NULL,
+    ts_ms    INTEGER NOT NULL,
+    PRIMARY KEY (chain_id, safe)
+);
+CREATE TABLE IF NOT EXISTS safe_alerts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts_ms        INTEGER NOT NULL,
+    chain_id     INTEGER NOT NULL,
+    safe         TEXT NOT NULL,
+    severity     TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    message      TEXT NOT NULL,
+    safe_tx_hash TEXT,
+    read         INTEGER NOT NULL DEFAULT 0,
+    text         TEXT
+);
 ";
 
 impl Store {
@@ -91,6 +116,11 @@ impl Store {
     fn init(conn: Connection) -> Result<Self> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.execute_batch(SCHEMA)?;
+        // Logs from before alerts carried a translation.
+        let has_text = conn.prepare("SELECT text FROM safe_alerts LIMIT 0").is_ok();
+        if !has_text {
+            conn.execute_batch("ALTER TABLE safe_alerts ADD COLUMN text TEXT")?;
+        }
         Ok(Self { conn: Mutex::new(conn) })
     }
 
@@ -189,6 +219,17 @@ impl Store {
             .execute("UPDATE requests SET status = 'abandoned' WHERE status IN ('pending', 'disconnected')", [])?)
     }
 
+    /// Deletes every logged request except those in `keep`. Returns how many were removed.
+    pub fn clear_requests(&self, keep: &[u64]) -> Result<usize> {
+        let keep = keep.iter().map(u64::to_string).collect::<Vec<_>>().join(",");
+        let conn = self.conn.lock();
+        let removed = conn.execute(&format!("DELETE FROM requests WHERE id NOT IN ({keep})"), [])?;
+        // A DELETE only marks pages free: rebuild the file and empty the WAL so
+        // the cleared requests are really gone from disk.
+        conn.execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")?;
+        Ok(removed)
+    }
+
     pub fn record_decision(&self, dedupe_key: &str, decision: Decision, ts_ms: u64) -> Result<()> {
         self.conn.lock().execute(
             "INSERT OR REPLACE INTO decisions (dedupe_key, decision, ts_ms) VALUES (?1, ?2, ?3)",
@@ -204,6 +245,108 @@ impl Store {
             .query_row("SELECT decision FROM decisions WHERE dedupe_key = ?1", [dedupe_key], |r| r.get(0))
             .optional()?;
         Ok(d.and_then(|d| parse_name(&d)))
+    }
+}
+
+impl Store {
+    /// The last reading of a watched Safe and the queued transaction hashes already alerted on.
+    pub fn safe_snapshot(&self, chain_id: u64, safe: &Address) -> Result<Option<(SafeState, Vec<String>)>> {
+        let row: Option<(String, String)> = self
+            .conn
+            .lock()
+            .query_row(
+                "SELECT state, seen FROM safe_snapshots WHERE chain_id = ?1 AND safe = ?2",
+                params![chain_id as i64, safe.to_checksum(None)],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        match row {
+            Some((state, seen)) => Ok(Some((serde_json::from_str(&state)?, serde_json::from_str(&seen)?))),
+            None => Ok(None),
+        }
+    }
+
+    pub fn save_safe_snapshot(&self, chain_id: u64, state: &SafeState, seen: &[String], ts_ms: u64) -> Result<()> {
+        self.conn.lock().execute(
+            "INSERT OR REPLACE INTO safe_snapshots (chain_id, safe, state, seen, ts_ms) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![chain_id as i64, state.address.to_checksum(None), serde_json::to_string(state)?, serde_json::to_string(seen)?, ts_ms as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Forgets the snapshots of Safes that are no longer watched, so watching
+    /// one again starts from a fresh baseline.
+    pub fn retain_safe_snapshots(&self, watched: &[(u64, Address)]) -> Result<()> {
+        let conn = self.conn.lock();
+        let rows: Vec<(i64, String)> = conn
+            .prepare("SELECT chain_id, safe FROM safe_snapshots")?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        for (chain_id, safe) in rows {
+            let kept = watched.iter().any(|(c, a)| *c as i64 == chain_id && a.to_checksum(None) == safe);
+            if !kept {
+                conn.execute("DELETE FROM safe_snapshots WHERE chain_id = ?1 AND safe = ?2", params![chain_id, safe])?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Stores an alert and returns it with its id.
+    pub fn add_safe_alert(&self, ts_ms: u64, chain_id: u64, safe: &Address, f: &Finding) -> Result<SafeAlert> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO safe_alerts (ts_ms, chain_id, safe, severity, kind, message, safe_tx_hash, text) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                ts_ms as i64,
+                chain_id as i64,
+                safe.to_checksum(None),
+                name_of(f.severity),
+                f.kind,
+                f.message,
+                f.safe_tx_hash,
+                f.text.as_ref().map(serde_json::to_string).transpose()?
+            ],
+        )?;
+        Ok(SafeAlert {
+            id: conn.last_insert_rowid() as u64,
+            ts_ms,
+            chain_id,
+            safe: *safe,
+            severity: f.severity,
+            kind: f.kind.to_string(),
+            message: f.message.clone(),
+            safe_tx_hash: f.safe_tx_hash.clone(),
+            read: false,
+            text: f.text.clone(),
+        })
+    }
+
+    /// Newest first.
+    pub fn safe_alerts(&self, limit: u32) -> Result<Vec<SafeAlert>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, ts_ms, chain_id, safe, severity, kind, message, safe_tx_hash, read, text FROM safe_alerts ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit.min(1000) as i64], |r| {
+            Ok(SafeAlert {
+                id: r.get::<_, i64>(0)? as u64,
+                ts_ms: r.get::<_, i64>(1)? as u64,
+                chain_id: r.get::<_, i64>(2)? as u64,
+                safe: r.get::<_, String>(3)?.parse().unwrap_or_default(),
+                severity: parse_name(&r.get::<_, String>(4)?).unwrap_or(Severity::Warning),
+                kind: r.get(5)?,
+                message: r.get(6)?,
+                safe_tx_hash: r.get(7)?,
+                read: r.get::<_, i64>(8)? != 0,
+                text: r.get::<_, Option<String>>(9)?.and_then(|t| serde_json::from_str(&t).ok()),
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub fn mark_safe_alerts_read(&self) -> Result<()> {
+        self.conn.lock().execute("UPDATE safe_alerts SET read = 1 WHERE read = 0", [])?;
+        Ok(())
     }
 }
 
@@ -310,6 +453,43 @@ mod tests {
     }
 
     #[test]
+    fn cleared_requests_do_not_linger_in_the_database_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("log.sqlite");
+        let s = Store::open(&path).unwrap();
+        for id in 1..=50 {
+            let mut r = record(id, "eth_sendRawTransaction", Status::Approved);
+            r.summary = format!("PRIVATE-MARKER-{id}");
+            s.upsert(&r).unwrap();
+        }
+        s.clear_requests(&[]).unwrap();
+        for entry in std::fs::read_dir(dir.path()).unwrap() {
+            let file = entry.unwrap().path();
+            let bytes = std::fs::read(&file).unwrap();
+            assert!(!bytes.windows(15).any(|w| w == b"PRIVATE-MARKER-"), "found in {}", file.display());
+        }
+    }
+
+    #[test]
+    fn alerts_keep_their_translation_also_in_an_older_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("log.sqlite");
+        // A log written before alerts carried a translation.
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE safe_alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ms INTEGER NOT NULL, chain_id INTEGER NOT NULL, safe TEXT NOT NULL,
+                 severity TEXT NOT NULL, kind TEXT NOT NULL, message TEXT NOT NULL, safe_tx_hash TEXT, read INTEGER NOT NULL DEFAULT 0);",
+            )
+            .unwrap();
+        let s = Store::open(&path).unwrap();
+        let text = crate::text::Text::new("alert.threshold_changed", [("old", "2"), ("new", "1")]);
+        let f = Finding { severity: Severity::Danger, kind: "config_change", message: text.english(), safe_tx_hash: None, text: Some(text.clone()) };
+        s.add_safe_alert(1, 1, &Address::repeat_byte(1), &f).unwrap();
+        assert_eq!(s.safe_alerts(10).unwrap()[0].text, Some(text));
+    }
+
+    #[test]
     fn open_requests_become_abandoned() {
         let s = Store::open_in_memory().unwrap();
         s.upsert(&record(1, "eth_sendRawTransaction", Status::Pending)).unwrap();
@@ -327,6 +507,26 @@ mod tests {
         s.record_decision("0xhash", Decision::Rejected, 1).unwrap();
         s.record_decision("0xhash", Decision::Approved, 2).unwrap();
         assert_eq!(s.decision("0xhash").unwrap(), Some(Decision::Approved));
+    }
+
+    #[test]
+    fn keeps_safe_snapshots_and_alerts() {
+        let s = Store::open_in_memory().unwrap();
+        let safe = Address::repeat_byte(1);
+        assert!(s.safe_snapshot(1, &safe).unwrap().is_none());
+        let state = SafeState { address: safe, threshold: 2, ..Default::default() };
+        s.save_safe_snapshot(1, &state, &["0xaa".into()], 5).unwrap();
+        assert_eq!(s.safe_snapshot(1, &safe).unwrap(), Some((state, vec!["0xaa".to_string()])));
+        assert!(s.safe_snapshot(10, &safe).unwrap().is_none(), "per chain");
+
+        let f = Finding { severity: Severity::Danger, kind: "config_change", message: "m".into(), safe_tx_hash: None, text: None };
+        let a = s.add_safe_alert(7, 1, &safe, &f).unwrap();
+        s.add_safe_alert(8, 1, &safe, &f).unwrap();
+        let list = s.safe_alerts(10).unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[1], a);
+        s.mark_safe_alerts_read().unwrap();
+        assert!(s.safe_alerts(10).unwrap().iter().all(|a| a.read));
     }
 
     #[test]

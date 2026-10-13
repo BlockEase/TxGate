@@ -1,5 +1,6 @@
 // Typed bridge to the Rust shell. Types mirror the serde output of txgate-core.
 
+import type { Text } from "./i18n";
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
@@ -67,12 +68,158 @@ export interface Risk {
   severity: Severity;
   code: string;
   message: string;
+  text?: Text;
+}
+
+export interface CallInfo {
+  selector: string | null;
+  signature: string | null;
+  function: string | null;
+  args: Arg[];
 }
 
 export interface Analysis {
-  call: { selector: string | null; signature: string | null; function: string | null; args: Arg[] };
+  call: CallInfo;
   risks: Risk[];
   summary: string;
+  /** Present when the transaction calls a Safe's execTransaction. */
+  safe?: SafeExec;
+  /** The calls a smart account is asked to make (ERC-4337 / ERC-7579 execute). */
+  account?: SafeTxAnalysis;
+}
+
+// — Safe multisig (mirrors txgate-core safe*.rs) —
+
+/** The fields a Safe owner signs. Quantities are hex strings. */
+export interface SafeTx {
+  to: string;
+  value: string;
+  data: string;
+  /** 0 = CALL, 1 = DELEGATECALL */
+  operation: number;
+  safe_tx_gas: string;
+  base_gas: string;
+  gas_price: string;
+  gas_token: string;
+  refund_receiver: string;
+  nonce: string;
+}
+
+export interface SafeHashes {
+  domain_hash: string;
+  message_hash: string;
+  safe_tx_hash: string;
+}
+
+export interface InnerCall {
+  operation: number;
+  to: string;
+  value: string;
+  data: string;
+  call: CallInfo;
+  summary: string;
+}
+
+export interface SafeTxAnalysis {
+  calls: InnerCall[];
+  /** Name of the official MultiSend library when the SafeTx is a batch. */
+  batch: string | null;
+  risks: Risk[];
+  summary: string;
+}
+
+export interface SafeExec {
+  safe: string;
+  tx: SafeTx;
+  signatures: string;
+  analysis: SafeTxAnalysis;
+}
+
+export interface SafeState {
+  address: string;
+  version: string | null;
+  nonce: string;
+  threshold: number;
+  owners: string[];
+  singleton: string | null;
+  singleton_name: string | null;
+  guard: string | null;
+  /** Safe v1.5.0+: the guard for transactions executed by modules. */
+  module_guard?: string | null;
+  fallback_handler: string | null;
+  modules: string[];
+}
+
+export type SignatureKind = "eip712" | "eth_sign" | "approved_hash" | "contract";
+
+export interface CheckedSignature {
+  kind: SignatureKind;
+  signer: string | null;
+  error: string | null;
+  is_owner: boolean;
+  valid: boolean;
+  note: string | null;
+  note_text?: Text;
+}
+
+export interface SafeCheck {
+  state: SafeState | null;
+  hashes: SafeHashes | null;
+  signatures: CheckedSignature[];
+  valid_signatures: number;
+  risks: Risk[];
+}
+
+export interface SafeTxReport {
+  chain_id: number;
+  safe: string;
+  tx: SafeTx;
+  state: SafeState | null;
+  hashes: SafeHashes;
+  analysis: SafeTxAnalysis;
+  service: { reported_hash: string; proposer: string | null; submission_date: string | null; origin: string | null } | null;
+  confirmations: CheckedSignature[];
+  risks: Risk[];
+}
+
+export interface WatchStatus {
+  chain_id: number;
+  address: string;
+  label: string;
+  state: SafeState | null;
+  queue: SafeTxReport[];
+  error: string | null;
+  service_error: string | null;
+  checked_ms: number;
+  error_text?: Text;
+  service_error_text?: Text;
+}
+
+export interface SafeAlert {
+  id: number;
+  ts_ms: number;
+  chain_id: number;
+  safe: string;
+  severity: Severity;
+  kind: "config_change" | "executed" | "proposed";
+  message: string;
+  safe_tx_hash: string | null;
+  read: boolean;
+  text?: Text;
+}
+
+export interface WatchedSafe {
+  chain_id: number;
+  address: string;
+  label: string;
+}
+
+export interface SafeConfig {
+  watched: WatchedSafe[];
+  service_enabled: boolean;
+  service_api_key: string;
+  service_url: string;
+  poll_secs: number;
 }
 
 export interface TokenInfo {
@@ -87,6 +234,10 @@ export interface Enrichment {
   formatted_args: [string, string][];
   account_nonce: number | null;
   to_is_contract: boolean | null;
+  /** execTransaction: hashes at the Safe's nonce and verified signatures. */
+  safe?: SafeCheck;
+  /** approveHash: the transaction the approved hash stands for. */
+  safe_approval?: SafeTxReport;
 }
 
 export interface Authorization {
@@ -175,7 +326,10 @@ export interface Config {
   providers: Partial<Record<ProviderId, string>>;
   tenderly: { account: string; project: string; access_key: string };
   logging: { mode: "tx_only" | "all" };
+  safe: SafeConfig;
   preview_window_secs: number;
+  /** Interface language; absent follows the system. */
+  language?: string | null;
 }
 
 export interface ServerStatus {
@@ -198,10 +352,16 @@ export interface Snapshot {
   intercepted_methods: string[];
   providers: ProviderInfo[];
   known_chains: { chain_id: number; name: string }[];
+  /** The running TxGate version. */
+  version: string;
+  /** [chain id, symbol] for native currencies other than ETH. */
+  native_currencies: [number, string][];
   config_path: string;
   db_path: string;
   lan_addresses: string[];
   startup_warning: string | null;
+  safe_watch: WatchStatus[];
+  safe_alerts: SafeAlert[];
 }
 
 export interface HistoryQuery {
@@ -215,22 +375,39 @@ export interface HistoryQuery {
   before_id?: number;
 }
 
+/** Result of asking GitHub for the latest TxGate release. */
+export type UpdateCheck =
+  | { status: "available"; current: string; latest: string; url: string }
+  | { status: "up_to_date"; current: string; latest: string }
+  | { status: "no_release"; current: string };
+
 export type EngineEvent =
   | { type: "request"; payload: RequestRecord }
   | { type: "pending"; payload: RequestRecord[] }
   | { type: "unroutable"; payload: { chain_id: number; client: string; message: string } }
-  | { type: "server"; payload: ServerStatus };
+  | { type: "server"; payload: ServerStatus }
+  | { type: "safe_watch"; payload: WatchStatus[] }
+  | { type: "safe_alert"; payload: SafeAlert }
+  | { type: "history_cleared" };
 
 export const api = {
   snapshot: () => invoke<Snapshot>("get_snapshot"),
   decide: (id: number, approve: boolean) => invoke<RequestRecord>("decide", { id, approve }),
   simulate: (id: number) => invoke<SimulationOutcome>("simulate", { id }),
   history: (query: HistoryQuery) => invoke<RequestRecord[]>("query_history", { query }),
+  /** Deletes the request history except held transactions; returns how many requests were deleted. */
+  clearHistory: () => invoke<number>("clear_history"),
+  setUiLanguage: (language: string) => invoke<void>("set_ui_language", { language }),
+  checkUpdate: () => invoke<UpdateCheck>("check_update"),
   saveConfig: (config: Config) => invoke<ServerStatus>("save_config", { config }),
   saveNetwork: (network: NetworkConfig, originalChainId: number | null) =>
     invoke<Config>("save_network", { network, originalChainId }),
   deleteNetwork: (chainId: number) => invoke<Config>("delete_network", { chainId }),
   restartListener: () => invoke<ServerStatus>("restart_listener"),
+  safeReview: (chainId: number, safe: string, input: unknown) => invoke<SafeTxReport>("safe_review", { chainId, safe, input }),
+  safeQueue: (chainId: number, safe: string) => invoke<SafeTxReport[]>("safe_queue", { chainId, safe }),
+  safePoll: () => invoke<WatchStatus[]>("safe_poll"),
+  safeAlertsRead: () => invoke<SafeAlert[]>("safe_alerts_read"),
 };
 
 export async function onEngineEvent(handler: (e: EngineEvent) => void): Promise<UnlistenFn> {

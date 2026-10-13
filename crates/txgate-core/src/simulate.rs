@@ -72,10 +72,11 @@ pub enum SimulateError {
     Http(u16, String),
 }
 
-/// Link to Tenderly's web simulator prefilled with the transaction.
-pub fn web_simulator_url(chain_id: u64, tx: &TxFields) -> String {
+/// Link to Tenderly's web simulator prefilled with the transaction. `caller`
+/// overrides `tx.from` as the simulated sender (the EntryPoint of a UserOperation).
+pub fn web_simulator_url(chain_id: u64, tx: &TxFields, caller: Option<Address>) -> String {
     let mut url = format!("https://dashboard.tenderly.co/simulator/new?network={chain_id}");
-    if let Some(from) = tx.from {
+    if let Some(from) = caller.or(tx.from) {
         url.push_str(&format!("&from={from}"));
     }
     if let Some(to) = tx.to {
@@ -91,8 +92,9 @@ pub fn web_simulator_url(chain_id: u64, tx: &TxFields) -> String {
     url
 }
 
-pub fn request_body(chain_id: u64, tx: &TxFields) -> Result<Value, SimulateError> {
-    let from = tx.from.ok_or(SimulateError::NoSender)?;
+/// The Tenderly request; `caller` overrides `tx.from` as the simulated sender.
+pub fn request_body(chain_id: u64, tx: &TxFields, caller: Option<Address>) -> Result<Value, SimulateError> {
+    let from = caller.or(tx.from).ok_or(SimulateError::NoSender)?;
     let mut body = json!({
         "network_id": chain_id.to_string(),
         "from": from.to_string(),
@@ -112,11 +114,13 @@ pub fn request_body(chain_id: u64, tx: &TxFields) -> Result<Value, SimulateError
     Ok(body)
 }
 
-pub async fn simulate(cfg: &TenderlyConfig, chain_id: u64, tx: &TxFields) -> Result<SimulationResult, SimulateError> {
+/// Simulates `tx`; balance changes are reported for `tx.from` even when
+/// `caller` sends the call.
+pub async fn simulate(cfg: &TenderlyConfig, chain_id: u64, tx: &TxFields, caller: Option<Address>) -> Result<SimulationResult, SimulateError> {
     if !cfg.is_configured() {
         return Err(SimulateError::NotConfigured);
     }
-    let body = request_body(chain_id, tx)?;
+    let body = request_body(chain_id, tx, caller)?;
     let url = format!(
         "https://api.tenderly.co/api/v1/account/{}/project/{}/simulate",
         cfg.account.trim(),
@@ -296,7 +300,7 @@ mod tests {
             value: U256::from(5),
             ..Default::default()
         };
-        let url = web_simulator_url(1, &tx);
+        let url = web_simulator_url(1, &tx, None);
         assert!(url.starts_with("https://dashboard.tenderly.co/simulator/new?network=1"));
         assert!(url.contains("rawFunctionInput=0x095e"));
         assert!(url.contains("&value=5"));
@@ -304,6 +308,6 @@ mod tests {
 
     #[test]
     fn request_needs_a_sender() {
-        assert!(matches!(request_body(1, &TxFields::default()), Err(SimulateError::NoSender)));
+        assert!(matches!(request_body(1, &TxFields::default(), None), Err(SimulateError::NoSender)));
     }
 }

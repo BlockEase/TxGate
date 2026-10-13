@@ -19,6 +19,10 @@ pub enum UpstreamError {
 #[async_trait]
 pub trait Upstream: Send + Sync {
     async fn call(&self, url: &str, body: &Value) -> Result<Value, UpstreamError>;
+
+    /// Fetches a JSON document from a REST API (used for the Safe Transaction
+    /// Service), with an optional bearer token.
+    async fn get(&self, url: &str, bearer: Option<&str>) -> Result<Value, UpstreamError>;
 }
 
 /// Production transport over HTTPS.
@@ -62,6 +66,20 @@ impl Upstream for HttpUpstream {
             _ if !status.is_success() => Err(UpstreamError::Http { status: status.as_u16(), body: truncate(&text, 300) }),
             _ => Err(UpstreamError::InvalidJson(truncate(&text, 300))),
         }
+    }
+
+    async fn get(&self, url: &str, bearer: Option<&str>) -> Result<Value, UpstreamError> {
+        let mut req = self.client.get(url);
+        if let Some(token) = bearer.map(str::trim).filter(|t| !t.is_empty()) {
+            req = req.bearer_auth(token);
+        }
+        let resp = req.send().await.map_err(|e| UpstreamError::Transport(e.without_url().to_string()))?;
+        let status = resp.status();
+        let text = resp.text().await.map_err(|e| UpstreamError::Transport(e.without_url().to_string()))?;
+        if !status.is_success() {
+            return Err(UpstreamError::Http { status: status.as_u16(), body: truncate(&text, 300) });
+        }
+        serde_json::from_str(&text).map_err(|_| UpstreamError::InvalidJson(truncate(&text, 300)))
     }
 }
 
@@ -107,11 +125,16 @@ pub mod fake {
     use super::*;
 
     type Handler = Arc<dyn Fn(&Value) -> Result<Value, UpstreamError> + Send + Sync>;
+    /// A GET request as (url, bearer token).
+    type GetRequest = (String, Option<String>);
 
     #[derive(Clone, Default)]
     pub struct FakeUpstream {
         handlers: Arc<Mutex<HashMap<String, Handler>>>,
         calls: Arc<Mutex<Vec<(String, Value)>>>,
+        /// GET responses by URL prefix, longest prefix first.
+        documents: Arc<Mutex<Vec<(String, Value)>>>,
+        gets: Arc<Mutex<Vec<GetRequest>>>,
     }
 
     impl FakeUpstream {
@@ -127,6 +150,19 @@ pub mod fake {
         pub fn on_fn(&self, method: &str, f: impl Fn(&Value) -> Result<Value, UpstreamError> + Send + Sync + 'static) -> &Self {
             self.handlers.lock().insert(method.to_string(), Arc::new(f));
             self
+        }
+
+        /// Answers GET requests whose URL starts with `prefix`; others get HTTP 404.
+        pub fn on_get(&self, prefix: &str, doc: Value) -> &Self {
+            let mut docs = self.documents.lock();
+            docs.push((prefix.to_string(), doc));
+            docs.sort_by_key(|(p, _)| std::cmp::Reverse(p.len()));
+            self
+        }
+
+        /// All GET requests so far as (url, bearer token).
+        pub fn gets(&self) -> Vec<GetRequest> {
+            self.gets.lock().clone()
         }
 
         /// All calls so far as (url, body).
@@ -148,6 +184,15 @@ pub mod fake {
             match handler {
                 Some(h) => h(body),
                 None => Ok(json!({"jsonrpc": "2.0", "id": body["id"], "error": {"code": -32601, "message": "method not found"}})),
+            }
+        }
+
+        async fn get(&self, url: &str, bearer: Option<&str>) -> Result<Value, UpstreamError> {
+            self.gets.lock().push((url.to_string(), bearer.map(str::to_string)));
+            let docs = self.documents.lock();
+            match docs.iter().find(|(p, _)| url.starts_with(p.as_str())) {
+                Some((_, doc)) => Ok(doc.clone()),
+                None => Err(UpstreamError::Http { status: 404, body: "Not found".into() }),
             }
         }
     }

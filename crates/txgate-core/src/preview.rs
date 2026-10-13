@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 use alloy_primitives::{Address, Bytes, U256};
 use serde::{Deserialize, Serialize};
 
-use crate::decode::TxFields;
+use crate::decode::{Authorization, TxFields};
 
 /// Upper bound on remembered previews; old ones fall out first.
 const MAX_PREVIEWS: usize = 512;
@@ -23,6 +23,27 @@ struct Preview {
     to: Option<Address>,
     value: U256,
     input: Bytes,
+    /// EIP-7702 delegations, as `(chain id, delegate, authority)`.
+    delegations: Vec<Delegation>,
+}
+
+type Delegation = (U256, Address, Option<Address>);
+
+fn delegations(auths: &[Authorization]) -> Vec<Delegation> {
+    auths.iter().map(|a| (a.chain_id, a.address, a.authority)).collect()
+}
+
+fn fmt_delegations(list: &[Delegation]) -> String {
+    if list.is_empty() {
+        return "—".into();
+    }
+    list.iter()
+        .map(|(chain, to, who)| {
+            let who = who.map(|a| a.to_checksum(None)).unwrap_or_else(|| "?".into());
+            format!("{who} → {} (chain {chain})", to.to_checksum(None))
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,7 +79,7 @@ impl PreviewBook {
         self.window_ms = window_secs * 1000;
     }
 
-    pub fn record(&mut self, request_id: u64, at_ms: u64, chain_id: u64, tx: &TxFields) {
+    pub fn record(&mut self, request_id: u64, at_ms: u64, chain_id: u64, tx: &TxFields, auths: &[Authorization]) {
         if self.previews.len() == MAX_PREVIEWS {
             self.previews.pop_front();
         }
@@ -70,11 +91,13 @@ impl PreviewBook {
             to: tx.to,
             value: tx.value,
             input: tx.input.clone(),
+            delegations: delegations(auths),
         });
     }
 
     /// Compares a transaction about to be broadcast with recent previews.
-    pub fn check(&self, now_ms: u64, chain_id: u64, tx: &TxFields) -> PreviewMatch {
+    pub fn check(&self, now_ms: u64, chain_id: u64, tx: &TxFields, auths: &[Authorization]) -> PreviewMatch {
+        let signed_delegations = delegations(auths);
         let candidates: Vec<&Preview> = self
             .previews
             .iter()
@@ -85,7 +108,7 @@ impl PreviewBook {
             .filter(|p| p.from.is_none() || p.from == tx.from)
             .collect();
 
-        if let Some(p) = candidates.iter().find(|p| p.to == tx.to && p.value == tx.value && p.input == tx.input) {
+        if let Some(p) = candidates.iter().find(|p| p.to == tx.to && p.value == tx.value && p.input == tx.input && p.delegations == signed_delegations) {
             return PreviewMatch::Matched { request_id: p.request_id, at_ms: p.at_ms };
         }
         // Only previews explicitly from this sender count as evidence of tampering.
@@ -102,6 +125,13 @@ impl PreviewBook {
         }
         if p.input != tx.input {
             diffs.push(FieldDiff { field: "data".into(), previewed: p.input.to_string(), signed: tx.input.to_string() });
+        }
+        if p.delegations != signed_delegations {
+            diffs.push(FieldDiff {
+                field: "authorizations".into(),
+                previewed: fmt_delegations(&p.delegations),
+                signed: fmt_delegations(&signed_delegations),
+            });
         }
         PreviewMatch::Mismatch { request_id: p.request_id, at_ms: p.at_ms, diffs }
     }
@@ -123,15 +153,15 @@ mod tests {
     #[test]
     fn identical_send_matches_preview() {
         let mut book = PreviewBook::new(600);
-        book.record(7, 1_000, 1, &tx(ROUTER, &[1, 2]));
-        assert_eq!(book.check(5_000, 1, &tx(ROUTER, &[1, 2])), PreviewMatch::Matched { request_id: 7, at_ms: 1_000 });
+        book.record(7, 1_000, 1, &tx(ROUTER, &[1, 2]), &[]);
+        assert_eq!(book.check(5_000, 1, &tx(ROUTER, &[1, 2]), &[]), PreviewMatch::Matched { request_id: 7, at_ms: 1_000 });
     }
 
     #[test]
     fn different_target_is_a_mismatch_with_diffs() {
         let mut book = PreviewBook::new(600);
-        book.record(7, 1_000, 1, &tx(ROUTER, &[1, 2]));
-        let PreviewMatch::Mismatch { diffs, .. } = book.check(2_000, 1, &tx(EVIL, &[9])) else { panic!("expected mismatch") };
+        book.record(7, 1_000, 1, &tx(ROUTER, &[1, 2]), &[]);
+        let PreviewMatch::Mismatch { diffs, .. } = book.check(2_000, 1, &tx(EVIL, &[9]), &[]) else { panic!("expected mismatch") };
         let fields: Vec<_> = diffs.iter().map(|d| d.field.as_str()).collect();
         assert_eq!(fields, ["to", "data"]);
     }
@@ -139,9 +169,9 @@ mod tests {
     #[test]
     fn previews_outside_the_window_or_chain_are_ignored() {
         let mut book = PreviewBook::new(10);
-        book.record(1, 0, 1, &tx(ROUTER, &[1]));
-        book.record(2, 50_000, 8453, &tx(ROUTER, &[1]));
-        assert_eq!(book.check(60_000, 1, &tx(ROUTER, &[1])), PreviewMatch::NoPreview);
+        book.record(1, 0, 1, &tx(ROUTER, &[1]), &[]);
+        book.record(2, 50_000, 8453, &tx(ROUTER, &[1]), &[]);
+        assert_eq!(book.check(60_000, 1, &tx(ROUTER, &[1]), &[]), PreviewMatch::NoPreview);
     }
 
     #[test]
@@ -149,15 +179,15 @@ mod tests {
         let mut book = PreviewBook::new(600);
         let mut other = tx(ROUTER, &[1]);
         other.from = Some(EVIL);
-        book.record(1, 0, 1, &other);
-        assert_eq!(book.check(1_000, 1, &tx(ROUTER, &[1])), PreviewMatch::NoPreview);
+        book.record(1, 0, 1, &other, &[]);
+        assert_eq!(book.check(1_000, 1, &tx(ROUTER, &[1]), &[]), PreviewMatch::NoPreview);
     }
 
     #[test]
     fn latest_exact_match_wins_over_older_mismatch() {
         let mut book = PreviewBook::new(600);
-        book.record(1, 0, 1, &tx(EVIL, &[9]));
-        book.record(2, 100, 1, &tx(ROUTER, &[1]));
-        assert!(matches!(book.check(200, 1, &tx(ROUTER, &[1])), PreviewMatch::Matched { request_id: 2, .. }));
+        book.record(1, 0, 1, &tx(EVIL, &[9]), &[]);
+        book.record(2, 100, 1, &tx(ROUTER, &[1]), &[]);
+        assert!(matches!(book.check(200, 1, &tx(ROUTER, &[1]), &[]), PreviewMatch::Matched { request_id: 2, .. }));
     }
 }
