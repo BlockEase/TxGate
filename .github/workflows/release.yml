@@ -1,6 +1,6 @@
 # Every push to main is tested, in BlockEase/TxGate and in every fork.
 # Only in BlockEase/TxGate, when the tests pass and the app version
-# (src-tauri/tauri.conf.json) has no release yet, installers are built for
+# ([workspace.package] in Cargo.toml) has no release yet, installers are built for
 # Windows, macOS (Apple silicon and Intel) and Linux and published as
 # release v<version>. To ship a new release, raise the version and push.
 # Forks never release.
@@ -54,16 +54,6 @@ jobs:
           npm ci
           npm --prefix ui ci
 
-      - name: Check that all version numbers agree
-        run: |
-          v=$(node -p "require('./src-tauri/tauri.conf.json').version")
-          for f in package.json ui/package.json; do
-            [ "$(node -p "require('./$f').version")" = "$v" ] || { echo "::error file=$f::version differs from tauri.conf.json ($v)"; exit 1; }
-          done
-          for f in src-tauri/Cargo.toml crates/txgate-core/Cargo.toml; do
-            grep -q "^version = \"$v\"$" "$f" || { echo "::error file=$f::version differs from tauri.conf.json ($v)"; exit 1; }
-          done
-
       - name: Rust tests
         run: cargo test --workspace --locked
 
@@ -87,14 +77,16 @@ jobs:
           REPO: ${{ github.repository }}
           REF: ${{ github.ref }}
         run: |
-          v=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          # The workspace version, the only version number of the app.
+          v=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml)
+          [ -n "$v" ] || { echo "::error file=Cargo.toml::no version in [workspace.package]"; exit 1; }
           echo "version=$v" >> "$GITHUB_OUTPUT"
           if [ "$REPO" != "BlockEase/TxGate" ] || [ "$REF" != "refs/heads/main" ]; then
             echo "release=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Tests only: releases are published from the main branch of BlockEase/TxGate, not $REPO ($REF)."
           elif git ls-remote --exit-code --tags origin "refs/tags/v$v" > /dev/null; then
             echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::v$v is already released; raise the version in src-tauri/tauri.conf.json to publish a new one."
+            echo "::notice::v$v is already released; raise the version in Cargo.toml to publish a new one."
           else
             echo "release=true" >> "$GITHUB_OUTPUT"
           fi

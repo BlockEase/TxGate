@@ -54,6 +54,17 @@ pub struct Store {
     conn: Mutex<Connection>,
 }
 
+/// The user's own label for an address on one network.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AddressNote {
+    pub chain_id: u64,
+    pub address: alloy_primitives::Address,
+    pub note: String,
+}
+
+/// Longest note kept, in characters.
+pub const MAX_NOTE_CHARS: usize = 100;
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS requests (
     id          INTEGER PRIMARY KEY,
@@ -98,6 +109,12 @@ CREATE TABLE IF NOT EXISTS safe_alerts (
     safe_tx_hash TEXT,
     read         INTEGER NOT NULL DEFAULT 0,
     text         TEXT
+);
+CREATE TABLE IF NOT EXISTS address_notes (
+    chain_id INTEGER NOT NULL,
+    address  TEXT NOT NULL,
+    note     TEXT NOT NULL,
+    PRIMARY KEY (chain_id, address)
 );
 ";
 
@@ -348,6 +365,38 @@ impl Store {
         self.conn.lock().execute("UPDATE safe_alerts SET read = 1 WHERE read = 0", [])?;
         Ok(())
     }
+
+    /// Every address note, on every network.
+    pub fn address_notes(&self) -> Result<Vec<AddressNote>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare("SELECT chain_id, address, note FROM address_notes ORDER BY chain_id, address")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (chain_id, address, note) = row?;
+            if let Ok(address) = address.parse() {
+                out.push(AddressNote { chain_id: chain_id as u64, address, note });
+            }
+        }
+        Ok(out)
+    }
+
+    /// Sets the note of `address` on `chain_id`; an empty note removes it.
+    pub fn set_address_note(&self, chain_id: u64, address: &alloy_primitives::Address, note: &str) -> Result<()> {
+        let note: String = note.trim().chars().take(MAX_NOTE_CHARS).collect();
+        let conn = self.conn.lock();
+        let key = format!("{address:#x}");
+        if note.is_empty() {
+            conn.execute("DELETE FROM address_notes WHERE chain_id = ?1 AND address = ?2", rusqlite::params![chain_id as i64, key])?;
+        } else {
+            conn.execute(
+                "INSERT INTO address_notes (chain_id, address, note) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(chain_id, address) DO UPDATE SET note = excluded.note",
+                rusqlite::params![chain_id as i64, key, note],
+            )?;
+        }
+        Ok(())
+    }
 }
 
 const SELECT_COLUMNS: &str = "SELECT id, ts_ms, chain_id, method, category, client, summary, status, duration_ms,
@@ -398,6 +447,25 @@ mod tests {
             response: None,
             detail: None,
         }
+    }
+
+    #[test]
+    fn address_notes_are_kept_per_network() {
+        use alloy_primitives::Address;
+        let s = Store::open_in_memory().unwrap();
+        let addr = Address::repeat_byte(0xab);
+        s.set_address_note(1, &addr, "  Treasury  ").unwrap();
+        s.set_address_note(8453, &addr, "Base hot wallet").unwrap();
+        let notes = s.address_notes().unwrap();
+        assert_eq!(notes.len(), 2);
+        assert!(notes.contains(&AddressNote { chain_id: 1, address: addr, note: "Treasury".into() }), "trimmed: {notes:?}");
+
+        s.set_address_note(1, &addr, "Cold storage").unwrap();
+        assert!(s.address_notes().unwrap().contains(&AddressNote { chain_id: 1, address: addr, note: "Cold storage".into() }));
+
+        // An empty note removes it, on that network only.
+        s.set_address_note(1, &addr, " ").unwrap();
+        assert_eq!(s.address_notes().unwrap(), vec![AddressNote { chain_id: 8453, address: addr, note: "Base hot wallet".into() }]);
     }
 
     #[test]

@@ -5,7 +5,7 @@ use alloy_primitives::Address;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{SafeConfig, WatchedSafe};
-use crate::decode::{short, Severity};
+use crate::decode::Severity;
 use crate::safe_service;
 use crate::safe_state::{read_state, review_service_tx, SafeState, SafeTxReport};
 use crate::text::Text;
@@ -233,7 +233,7 @@ pub fn proposal_finding(report: &SafeTxReport) -> Finding {
     let flagged = report.risks.iter().filter(|r| r.severity == Severity::Danger).count();
     let key = format!("proposed{}{}", if proposer.is_some() { "_by" } else { "" }, if flagged > 0 { "_flagged" } else { "" });
     let params = [
-        ("proposer", proposer.as_ref().map(short).unwrap_or_default()),
+        ("proposer", proposer.as_ref().map(crate::decode::full).unwrap_or_default()),
         ("nonce", report.tx.nonce.to_string()),
         ("summary", report.analysis.summary.clone()),
         ("flags", flagged.to_string()),

@@ -4,13 +4,30 @@
 import { useState } from "react";
 import { AlertTriangle, Info, ShieldAlert } from "lucide-react";
 import { api, errorText, type PreviewMatch, type Risk, type SimulationOutcome, type TxView } from "../api";
-import { clock, shortAddr, toBig } from "../format";
-import { t, tt } from "../i18n";
+import { clock, toBig } from "../format";
+import { t, tn } from "../i18n";
+import { Address, EngineText, WithAddresses } from "./Address";
 
 /** Static risks plus chain-state risks, most severe first. */
 export function allRisks(tx: TxView): Risk[] {
   const order = { danger: 0, warning: 1, info: 2 } as const;
   return [...tx.analysis.risks, ...(tx.enrichment?.risks ?? [])].sort((a, b) => order[a.severity] - order[b.severity]);
+}
+
+/** Risks of every transaction a request broadcasts, most severe first. In a
+ *  bundle each risk names its transaction, so none of them goes unseen. */
+export function requestRisks(txs: TxView[]): Risk[] {
+  if (txs.length === 1) return allRisks(txs[0]);
+  const order = { danger: 0, warning: 1, info: 2 } as const;
+  return txs
+    .flatMap((tx, i) =>
+      allRisks(tx).map((r) =>
+        r.text
+          ? { ...r, text: { ...r.text, prefix: [{ key: "dialog.bundle_prefix", params: { n: String(i + 1) } }, ...(r.text.prefix ?? [])] } }
+          : { ...r, message: t("dialog.bundle_risk", { n: i + 1, message: r.message }) },
+      ),
+    )
+    .sort((a, b) => order[a.severity] - order[b.severity]);
 }
 
 /** Runs a Tenderly simulation for a request; the result arrives as a record update. */
@@ -43,7 +60,9 @@ export function RiskList({ risks, title }: { risks: Risk[]; title?: string }) {
   const body = risks.map((r, i) => (
     <div key={i} className={`risk ${r.severity}`}>
       {r.severity === "danger" ? <ShieldAlert size={14} /> : r.severity === "warning" ? <AlertTriangle size={14} /> : <Info size={14} />}
-      <span>{tt(r.text, r.message)}</span>
+      <span>
+        <EngineText text={r.text} fallback={r.message} />
+      </span>
     </div>
   ));
   if (!serious) return <div className="section">{body}</div>;
@@ -78,14 +97,14 @@ export function Authorizations({ tx }: { tx: TxView }) {
             <div className="args num">
               <span>{t("auth.account")}</span>
               <span>
-                {a.authority ? <span className="mono">{a.authority}</span> : <span className="error-text">{t("auth.unknown")}</span>}
+                {a.authority ? <Address address={a.authority} full /> : <span className="error-text">{t("auth.unknown")}</span>}
                 {isSender && <span className="text-muted"> · {t("auth.is_sender")}</span>}
                 {a.authority && !isSender && <span className="text-muted"> · {t("auth.not_sender")}</span>}
               </span>
               {!revokes && (
                 <>
                   <span>{t("auth.delegate_to")}</span>
-                  <span className="mono">{a.address}</span>
+                  <span><Address address={a.address} full /></span>
                 </>
               )}
               <span>{t("auth.valid_on")}</span>
@@ -130,7 +149,7 @@ function ArgRow({ name, value, raw }: { name: string; value: string; raw: string
   return (
     <>
       <span>{name}</span>
-      <span title={raw}>{value}</span>
+      <span title={raw}>{/^0x[0-9a-fA-F]{40}$/.test(raw) ? <Address address={raw} full /> : value}</span>
     </>
   );
 }
@@ -193,7 +212,7 @@ function SimulationView({ outcome, symbols }: { outcome: Extract<SimulationOutco
         <div className="effect" key={`m${i}`}>
           <span className="kind">{c.direction === "out" ? t("effects.lose") : t("effects.receive")}</span>
           <span className="amt">{c.amount}</span>
-          <span>{c.symbol}</span>
+          <span>{c.token_address ? <Address address={c.token_address} label={c.symbol} /> : c.symbol}</span>
           <span className="note">{c.dollar_value ? `≈ $${Number(c.dollar_value).toLocaleString("en-US", { maximumFractionDigits: 2 })}` : ""}</span>
         </div>
       ))}
@@ -201,8 +220,10 @@ function SimulationView({ outcome, symbols }: { outcome: Extract<SimulationOutco
         <div className="effect" key={`a${i}`}>
           <span className="kind">{t("effects.approve")}</span>
           <span className="amt">{approvalAmount(a.amount)}</span>
-          <span title={a.token_address ?? ""}>{(a.token_address && symbols[a.token_address.toLowerCase()]) || shortAddr(a.token_address)}</span>
-          <span className="note">{t("effects.to", { address: shortAddr(a.spender) })}</span>
+          <span>
+            <Address address={a.token_address} label={(a.token_address && symbols[a.token_address.toLowerCase()]) || undefined} />
+          </span>
+          <span className="note">{tn("effects.to", { address: <Address address={a.spender} /> })}</span>
         </div>
       ))}
       <span className="fine">
@@ -241,9 +262,13 @@ export function PreviewNote({ preview }: { preview: PreviewMatch | null }) {
             {t(`preview.field.${d.field}`)}
           </span>
           <span className="text-muted">{t("preview.previewed")}</span>
-          <span className="mono">{d.previewed}</span>
+          <span className="mono">
+            <WithAddresses text={d.previewed} full />
+          </span>
           <span className="text-muted">{t("preview.signed")}</span>
-          <span className="mono">{d.signed}</span>
+          <span className="mono">
+            <WithAddresses text={d.signed} full />
+          </span>
         </div>
       ))}
     </div>

@@ -7,6 +7,7 @@ import { api, errorText, type Config, type SafeAlert, type SafeTxReport, type Sn
 import { dateTime, networkName, toBig } from "../format";
 import { SafeReportBody } from "../components/SafeParts";
 import { t, tt } from "../i18n";
+import { Address, EngineText, OnChain } from "../components/Address";
 
 function worst(r: SafeTxReport): "danger" | "warning" | "info" | null {
   if (r.risks.some((x) => x.severity === "danger")) return "danger";
@@ -262,7 +263,7 @@ function Watched({ config, watch, onConfig }: { config: Config; watch: WatchStat
             <div className="safe-item" key={`${w.chain_id}:${w.address}`}>
               <div className="safe-item-head">
                 <h5>{w.label || t("safe.safe")}</h5>
-                <span className="mono">{w.address}</span>
+                <Address address={w.address} chainId={w.chain_id} full />
                 <span className="text-muted">{networkName(config, w.chain_id)}</span>
                 <span className="spacer" />
                 <button className="btn btn-ghost" onClick={() => remove(w.chain_id, w.address)}>
@@ -270,7 +271,11 @@ function Watched({ config, watch, onConfig }: { config: Config; watch: WatchStat
                 </button>
               </div>
               {!s && <span className="text-muted">{t("safepage.not_checked")}</span>}
-              {s?.error && <span className="error-text">{tt(s.error_text, s.error)}</span>}
+              {s?.error && (
+                <span className="error-text">
+                  <EngineText text={s.error_text} fallback={s.error} />
+                </span>
+              )}
               {st && (
                 <span className="num">
                   {st.version ? `Safe ${st.version}` : t("safe.safe")} · {t("safepage.owners", { threshold: st.threshold, owners: st.owners.length })} ·{" "}
@@ -281,7 +286,11 @@ function Watched({ config, watch, onConfig }: { config: Config; watch: WatchStat
                 </span>
               )}
               {s?.service_error && <span className="fine">{t("safepage.queue_unavailable", { error: tt(s.service_error_text, s.service_error) })}</span>}
-              {st && !s.service_error && <Queue reports={s.queue} />}
+              {st && !s.service_error && (
+                <OnChain id={w.chain_id}>
+                  <Queue reports={s.queue} />
+                </OnChain>
+              )}
             </div>
           );
         })}
@@ -314,8 +323,10 @@ function Alerts({ config, alerts, onRead }: { config: Config; alerts: SafeAlert[
               <span className="fine num">{dateTime(a.ts_ms)}</span>
               <SeverityIcon severity={a.severity} />
               <span style={{ overflowWrap: "anywhere" }}>
-                <span className="mono">{a.safe.slice(0, 6)}…{a.safe.slice(-4)}</span> <span className="text-muted">{t("safepage.on_network", { network: networkName(config, a.chain_id) })}</span>{" "}
-                {tt(a.text, a.message)}
+                <OnChain id={a.chain_id}>
+                  <Address address={a.safe} /> <span className="text-muted">{t("safepage.on_network", { network: networkName(config, a.chain_id) })}</span>{" "}
+                  <EngineText text={a.text} fallback={a.message} />
+                </OnChain>
               </span>
             </div>
           ))}

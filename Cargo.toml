@@ -3,5 +3,8 @@ resolver = "2"
 members = ["crates/txgate-core", "src-tauri"]
 
 [workspace.package]
+# The TxGate version: the only place to change it. The app, its installers
+# (tauri.conf.json has no version of its own) and the update check use it.
+version = "0.2.0"
 edition = "2021"
 license = "GPL-3.0"

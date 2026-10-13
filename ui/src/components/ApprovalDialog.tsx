@@ -5,10 +5,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { api, errorText, type Config, type RequestRecord } from "../api";
-import { elapsed, eth, gwei, networkName, shortAddr, tenderlyReady } from "../format";
+import { elapsed, eth, gwei, networkName, tenderlyReady } from "../format";
 import { AccountSection, SafeSection } from "./SafeParts";
-import { allRisks, Authorizations, Effects, Params, PreviewNote, RiskList, tokenSymbols, useSimulate } from "./TxParts";
+import { Authorizations, Effects, Params, PreviewNote, requestRisks, RiskList, tokenSymbols, useSimulate } from "./TxParts";
 import { t } from "../i18n";
+import { Address, OnChain } from "./Address";
 
 /** Held transactions in the order they should be decided: per sender by nonce. */
 export function orderQueue(pending: RequestRecord[]): RequestRecord[] {
@@ -46,6 +47,8 @@ export function ApprovalDialog({
 }) {
   const queue = useMemo(() => orderQueue(pending), [pending]);
   const [index, setIndex] = useState(0);
+  /** Which transaction of a bundle is shown in detail. */
+  const [txIndex, setTxIndex] = useState(0);
   const [ack, setAck] = useState(false);
   const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -62,18 +65,16 @@ export function ApprovalDialog({
     setAck(false);
     setError(null);
     setBusy(null);
+    setTxIndex(0);
   }, [currentId]);
 
   // Chain-state checks finish after the dialog opens and can add warnings
   // (an approval to an account without code, a signer who is not an owner…).
   // An acknowledgement given before a new warning appeared no longer counts.
-  const currentTx = current?.detail?.txs[0];
-  const riskKey = currentTx
-    ? allRisks(currentTx)
+  const riskKey = requestRisks(current?.detail?.txs ?? [])
         .filter((r) => r.severity !== "info")
         .map((r) => `${r.severity}:${r.code}:${r.message}`)
-        .join("|")
-    : "";
+        .join("|");
   const seenRisks = useRef(riskKey);
   useEffect(() => {
     const before = new Set(seenRisks.current.split("|"));
@@ -97,10 +98,12 @@ export function ApprovalDialog({
 
   if (!current) return null;
   const detail = current.detail;
-  const tx = detail?.txs[0];
+  const txCount = detail?.txs.length ?? 0;
+  const shown = Math.min(txIndex, Math.max(0, txCount - 1));
+  const tx = detail?.txs[shown];
   const disconnected = current.status === "disconnected";
   const blockedBy = blockingNonce(current, pending);
-  const risks = tx ? allRisks(tx) : [];
+  const risks = requestRisks(detail?.txs ?? []);
   if (detail?.decode_error) {
     risks.unshift({
       severity: "danger",
@@ -129,6 +132,7 @@ export function ApprovalDialog({
 
   return (
     <div className="dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="approval-title">
+      <OnChain id={current.chain_id}>
       <div className="dialog approval">
         <div className="approval-head">
           <div className="dialog-title" id="approval-title">
@@ -166,6 +170,17 @@ export function ApprovalDialog({
           {detail && detail.attempts > 1 ? ` ${t("dialog.attempts", { count: detail.attempts })}` : ""}
         </span>
 
+        {txCount > 1 && (
+          <div className="queue-nav">
+            <button className="btn btn-ghost btn-icon" style={{ width: 28, height: 28 }} aria-label={t("dialog.previous_tx")} disabled={shown === 0} onClick={() => setTxIndex(shown - 1)}>
+              <ChevronLeft size={16} />
+            </button>
+            <span className="num">{t("dialog.bundle_position", { n: shown + 1, total: txCount })}</span>
+            <button className="btn btn-ghost btn-icon" style={{ width: 28, height: 28 }} aria-label={t("dialog.next_tx")} disabled={shown >= txCount - 1} onClick={() => setTxIndex(shown + 1)}>
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        )}
         {tx && (
           <div
             className="kv kv4"
@@ -174,27 +189,30 @@ export function ApprovalDialog({
               paddingTop: 12,
             }}
           >
+            {/* Always sender, then recipient, then amount. */}
+            <span>{t("panel.from")}</span>
+            <span className="span3">
+              <Address address={tx.fields.from} full />
+            </span>
+            <span>{t("panel.to")}</span>
+            <span className="span3">
+              {tx.fields.to ? <Address address={tx.fields.to} full /> : t("risk.contract_creation")}
+              {tx.analysis.call.function ? ` · ${tx.analysis.call.function}` : tx.analysis.call.selector ? ` · ${tx.analysis.call.selector}` : ""}
+            </span>
+            <span>{t("panel.value")}</span>
+            <span className="span3">{eth(tx.fields.value, current.chain_id)}</span>
             <span>{t("table.network")}</span>
             <span>
               {networkName(config, current.chain_id)} · {current.chain_id}
             </span>
             <span>{t("panel.nonce")}</span>
             <span>{tx.fields.nonce ?? "—"}</span>
-            <span>{t("dialog.signer")}</span>
-            <span title={tx.fields.from ?? ""}>{shortAddr(tx.fields.from)}</span>
             <span>{t("panel.max_fee")}</span>
             <span>{gwei(tx.max_fee_per_gas)}</span>
-            <span>{t("dialog.calls")}</span>
-            <span className="span3" title={tx.fields.to ?? ""}>
-              {tx.fields.to ? tx.fields.to : t("risk.contract_creation")}
-              {tx.analysis.call.function ? ` · ${tx.analysis.call.function}` : tx.analysis.call.selector ? ` · ${tx.analysis.call.selector}` : ""}
-            </span>
-            <span>{t("dialog.sends")}</span>
-            <span className="span3">{eth(tx.fields.value, current.chain_id)}</span>
             {tx.tx_type && (
               <>
                 <span>{t("panel.type")}</span>
-                <span className="span3">{tx.tx_type}</span>
+                <span>{tx.tx_type}</span>
               </>
             )}
           </div>
@@ -213,8 +231,8 @@ export function ApprovalDialog({
           />
         )}
         <RiskList risks={risks} />
-        <PreviewNote preview={detail?.preview ?? null} />
-        {tx && (
+        {shown === 0 && <PreviewNote preview={detail?.preview ?? null} />}
+        {tx && shown === 0 && (
           <Effects
             outcome={detail?.simulation ?? null}
             onSimulate={sim.simulate}
@@ -227,11 +245,7 @@ export function ApprovalDialog({
         {tx && <AccountSection tx={tx} chainId={current.chain_id} />}
         {tx && <SafeSection tx={tx} chainId={current.chain_id} />}
         {tx && <Params tx={tx} />}
-        {detail && detail.txs.length > 1 && (
-          <span className="note-accent">
-            {t("dialog.bundle", { count: detail.txs.length })}
-          </span>
-        )}
+        {txCount > 1 && <span className="note-accent">{t("dialog.bundle", { count: txCount })}</span>}
         {disconnected && (
           <div className="note-accent">
             {t("dialog.disconnected")}
@@ -262,6 +276,7 @@ export function ApprovalDialog({
           </div>
         </div>
       </div>
+      </OnChain>
     </div>
   );
 }
