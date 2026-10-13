@@ -42,8 +42,16 @@ export function formatUnits(v: bigint, decimals: number, maxFrac = 6): string {
   return `${neg ? "-" : ""}${intStr}${frac ? "." + frac : ""}`;
 }
 
-export function eth(v: string | null | undefined): string {
-  return `${formatUnits(toBig(v), 18)} ETH`;
+let nativeCurrencies = new Map<number, string>();
+
+/** Native currencies other than ETH, from the engine (set once from the snapshot). */
+export function setNativeCurrencies(list: [number, string][]): void {
+  nativeCurrencies = new Map(list);
+}
+
+/** A native-currency amount (wei) in the chain's own unit: ETH, BNB, POL, … */
+export function eth(v: string | null | undefined, chainId: number): string {
+  return `${formatUnits(toBig(v), 18)} ${nativeCurrencies.get(chainId) ?? "ETH"}`;
 }
 
 export function gwei(v: string | null | undefined): string {

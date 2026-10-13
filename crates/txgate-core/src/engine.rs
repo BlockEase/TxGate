@@ -494,7 +494,10 @@ impl Engine {
 
         let (mut detail, dedupe_key) = describe_send(ctx.chain_id, &payload);
         if let Some(first) = detail.txs.first() {
-            detail.preview = Some(self.0.previews.lock().check(now_ms(), ctx.chain_id, &first.fields, &first.authorizations));
+            // UserOperations are estimated with eth_estimateUserOperationGas, so there is no preview to compare.
+            if !matches!(payload, SendPayload::UserOperation { .. }) {
+                detail.preview = Some(self.0.previews.lock().check(now_ms(), ctx.chain_id, &first.fields, &first.authorizations));
+            }
             record.from = first.fields.from.map(|a| a.to_checksum(None));
             record.to = first.fields.to.map(|a| a.to_checksum(None));
             record.tx_hash = first.hash.clone();
@@ -506,7 +509,7 @@ impl Engine {
         // so they are always held.
         let signed = matches!(payload, SendPayload::Signed(_));
         if signed && let Ok(Some(Decision::Approved)) = self.0.store.decision(&dedupe_key) {
-            let (resp, status) = self.broadcast(&ctx.network.broadcast_url, &call).await;
+            let (resp, status) = self.broadcast(send_url(ctx, &call), &call).await;
             record.status = if status == Status::Approved { Status::AutoApproved } else { status };
             record.detail = Some(detail);
             record.duration_ms = elapsed_ms(received);
@@ -546,7 +549,7 @@ impl Engine {
                             record,
                             call: call.clone(),
                             dedupe_key,
-                            broadcast_url: ctx.network.broadcast_url.clone(),
+                            broadcast_url: send_url(ctx, &call).to_string(),
                             waiters: HashMap::from([(waiter_id, waiter)]),
                             received,
                         },
@@ -787,13 +790,21 @@ impl Drop for WaiterGuard {
 
 /// Decodes what a sending call would broadcast. Returns the detail and the key
 /// that identifies the same submission across wallet retries.
-/// The request as logged: node account passwords are replaced.
+/// Where an approved sending call goes.
+fn send_url<'a>(ctx: &'a Ctx, call: &Call) -> &'a str {
+    if crate::jsonrpc::READ_UPSTREAM_SENDS.contains(&call.method.as_str()) { &ctx.network.read_url } else { &ctx.network.broadcast_url }
+}
+
+/// The request as logged: node account passwords and private keys are replaced.
 fn redact_passwords(call: &Call) -> Value {
     let mut raw = call.raw.clone();
-    if crate::jsonrpc::PASSWORD_METHODS.contains(&call.method.as_str())
-        && let Some(p) = raw.get_mut("params").and_then(Value::as_array_mut).and_then(|a| a.get_mut(1))
-    {
-        *p = Value::String("<redacted>".into());
+    let secret = crate::jsonrpc::SECRET_PARAMS.iter().find(|(m, _)| *m == call.method).map(|(_, i)| *i);
+    if let (Some(indices), Some(params)) = (secret, raw.get_mut("params").and_then(Value::as_array_mut)) {
+        for i in indices {
+            if let Some(p) = params.get_mut(*i) {
+                *p = Value::String("<redacted>".into());
+            }
+        }
     }
     raw
 }
@@ -822,7 +833,9 @@ fn describe_send(chain_id: u64, payload: &SendPayload) -> (TxDetail, String) {
                     }
                 }
             }
-            if hashes.len() == 1 { hashes.remove(0) } else { format!("bundle:{}", hashes.join(",")) }
+            // Per chain: a transaction without a chain id (pre-EIP-155) is valid on
+            // every chain, and approving it on one must not approve it elsewhere.
+            if hashes.len() == 1 { format!("{chain_id}:{}", hashes.remove(0)) } else { format!("bundle:{chain_id}:{}", hashes.join(",")) }
         }
         SendPayload::UserOperation { op, entry_point } => {
             // The smart account calls itself with `callData`; its own code then
@@ -892,7 +905,9 @@ fn abbreviate(s: &str, head: usize, tail: usize) -> String {
 
 /// Short description of a read call's parameters for the monitor list.
 fn read_summary(call: &Call) -> String {
-    let s = match &call.params {
+    // Built from the logged copy, so secrets never reach the summary either.
+    let params = redact_passwords(call).get("params").cloned().unwrap_or(Value::Null);
+    let s = match &params {
         Value::Array(a) => a
             .iter()
             .map(|p| match p {

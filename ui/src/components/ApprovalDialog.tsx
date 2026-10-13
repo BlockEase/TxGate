@@ -1,7 +1,7 @@
 // Modal shown while transactions are held. One transaction at a time, ordered
 // by sender and nonce; approval requires an explicit acknowledgement.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { api, errorText, type Config, type RequestRecord } from "../api";
@@ -63,6 +63,24 @@ export function ApprovalDialog({
     setError(null);
     setBusy(null);
   }, [currentId]);
+
+  // Chain-state checks finish after the dialog opens and can add warnings
+  // (an approval to an account without code, a signer who is not an owner…).
+  // An acknowledgement given before a new warning appeared no longer counts.
+  const currentTx = current?.detail?.txs[0];
+  const riskKey = currentTx
+    ? allRisks(currentTx)
+        .filter((r) => r.severity !== "info")
+        .map((r) => `${r.severity}:${r.code}:${r.message}`)
+        .join("|")
+    : "";
+  const seenRisks = useRef(riskKey);
+  useEffect(() => {
+    const before = new Set(seenRisks.current.split("|"));
+    const added = riskKey.split("|").some((r) => r && !before.has(r));
+    seenRisks.current = riskKey;
+    if (added) setAck(false);
+  }, [riskKey]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -172,7 +190,7 @@ export function ApprovalDialog({
               {tx.analysis.call.function ? ` · ${tx.analysis.call.function}` : tx.analysis.call.selector ? ` · ${tx.analysis.call.selector}` : ""}
             </span>
             <span>{t("dialog.sends")}</span>
-            <span className="span3">{eth(tx.fields.value)}</span>
+            <span className="span3">{eth(tx.fields.value, current.chain_id)}</span>
             {tx.tx_type && (
               <>
                 <span>{t("panel.type")}</span>
@@ -206,8 +224,8 @@ export function ApprovalDialog({
           />
         )}
         {tx && <Authorizations tx={tx} />}
-        {tx && <AccountSection tx={tx} />}
-        {tx && <SafeSection tx={tx} />}
+        {tx && <AccountSection tx={tx} chainId={current.chain_id} />}
+        {tx && <SafeSection tx={tx} chainId={current.chain_id} />}
         {tx && <Params tx={tx} />}
         {detail && detail.txs.length > 1 && (
           <span className="note-accent">

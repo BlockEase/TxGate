@@ -18,4 +18,5 @@ pub mod safe_state;
 pub mod safe_watch;
 pub mod simulate;
 pub mod text;
+pub mod update;
 pub mod upstream;

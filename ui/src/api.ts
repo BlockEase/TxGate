@@ -144,6 +144,8 @@ export interface SafeState {
   singleton: string | null;
   singleton_name: string | null;
   guard: string | null;
+  /** Safe v1.5.0+: the guard for transactions executed by modules. */
+  module_guard?: string | null;
   fallback_handler: string | null;
   modules: string[];
 }
@@ -350,6 +352,10 @@ export interface Snapshot {
   intercepted_methods: string[];
   providers: ProviderInfo[];
   known_chains: { chain_id: number; name: string }[];
+  /** The running TxGate version. */
+  version: string;
+  /** [chain id, symbol] for native currencies other than ETH. */
+  native_currencies: [number, string][];
   config_path: string;
   db_path: string;
   lan_addresses: string[];
@@ -369,6 +375,12 @@ export interface HistoryQuery {
   before_id?: number;
 }
 
+/** Result of asking GitHub for the latest TxGate release. */
+export type UpdateCheck =
+  | { status: "available"; current: string; latest: string; url: string }
+  | { status: "up_to_date"; current: string; latest: string }
+  | { status: "no_release"; current: string };
+
 export type EngineEvent =
   | { type: "request"; payload: RequestRecord }
   | { type: "pending"; payload: RequestRecord[] }
@@ -386,6 +398,7 @@ export const api = {
   /** Deletes the request history except held transactions; returns how many requests were deleted. */
   clearHistory: () => invoke<number>("clear_history"),
   setUiLanguage: (language: string) => invoke<void>("set_ui_language", { language }),
+  checkUpdate: () => invoke<UpdateCheck>("check_update"),
   saveConfig: (config: Config) => invoke<ServerStatus>("save_config", { config }),
   saveNetwork: (network: NetworkConfig, originalChainId: number | null) =>
     invoke<Config>("save_network", { network, originalChainId }),

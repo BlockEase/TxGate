@@ -1,6 +1,6 @@
 # TxGate
 
-[English](../README.md) | **简体中文** | [繁體中文](README.zh-TW.md) | [Italiano](README.it.md) | [Français](README.fr.md) | [Português](README.pt.md)
+[English](../README.md) | **简体中文** | [Español](README.es.md) | [Русский](README.ru.md) | [Português](README.pt.md)
 
 钱包的 RPC 守门员：查看每一个请求，每笔交易都要经过你批准才会广播。
 
@@ -24,7 +24,7 @@ TxGate 是一个桌面应用（macOS、Windows、Linux），在本机运行一�
 - 与钱包之前 gas 预估的比对。两者不同时，dApp 前端可能已经偷换了交易。
 - 配置 Tenderly access key 后，会显示模拟出的余额与授权变化。
 
-界面、风险信息、Safe 警报与系统通知都支持 English、简体中文、繁體中文、Italiano、Français 和 Português。TxGate 默认跟随系统语言，你也可以在 **设置 → 语言** 中自行选择。
+界面、风险信息、Safe 警报与系统通知都支持 English、简体中文、Español、Русский 和 Português。TxGate 默认跟随系统语言，你也可以在 **设置 → 语言** 中自行选择。
 
 ### Safe 多签
 

@@ -27,7 +27,7 @@ const config: Config = {
     poll_secs: 60,
   },
   preview_window_secs: 600,
-  // `#…lang=zh-TW` previews another language.
+  // `#…lang=es` previews another language.
   language: window.location.hash.match(/lang=([\w-]+)/)?.[1] ?? null,
 };
 
@@ -234,6 +234,8 @@ export const mockSnapshot: Snapshot = {
     { id: "ankr", name: "Ankr", chains: [1, 8453, 42161, 10, 137] },
     { id: "drpc", name: "dRPC", chains: [1, 8453, 42161, 10, 137] },
   ],
+  version: "0.1.1",
+  native_currencies: [[56, "BNB"], [137, "POL"], [43114, "AVAX"], [100, "xDAI"]],
   known_chains: [
     { chain_id: 1, name: "Ethereum Mainnet" },
     { chain_id: 8453, name: "Base" },
@@ -255,6 +257,11 @@ export async function mockInvoke(cmd: string): Promise<unknown> {
   switch (cmd) {
     case "get_snapshot":
       return mockSnapshot;
+    case "check_update":
+      // `#about-uptodate` previews the "latest version" answer.
+      return window.location.hash.includes("uptodate")
+        ? { status: "up_to_date", current: "0.1.1", latest: "0.1.1" }
+        : { status: "available", current: "0.1.1", latest: "0.2.0", url: "https://github.com/BlockEase/TxGate/releases/tag/v0.2.0" };
     case "set_ui_language":
       return null;
     case "clear_history": {

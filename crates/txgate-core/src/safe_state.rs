@@ -26,6 +26,9 @@ sol! {
 
 /// `keccak256("guard_manager.guard.address")`
 const GUARD_SLOT: &str = "0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8";
+/// `keccak256("module_manager.module_guard.address")`: Safe v1.5.0's guard for
+/// module transactions (empty on older versions).
+pub(crate) const MODULE_GUARD_SLOT: &str = "0xb104e0b93118902c651344349b610029d694cfdec91c589c91ebafbcd0289947";
 /// `keccak256("fallback_manager.handler.address")`
 const FALLBACK_HANDLER_SLOT: &str = "0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5";
 /// Start and end marker of the Safe's linked lists.
@@ -44,6 +47,9 @@ pub struct SafeState {
     /// Name of the official deployment `singleton` matches, if any.
     pub singleton_name: Option<String>,
     pub guard: Option<Address>,
+    /// Safe v1.5.0+: the guard that checks transactions executed by modules.
+    #[serde(default)]
+    pub module_guard: Option<Address>,
     pub fallback_handler: Option<Address>,
     pub modules: Vec<Address>,
 }
@@ -90,6 +96,7 @@ pub async fn read_state(up: &dyn Upstream, url: &str, safe: Address) -> Result<S
         singleton_name: singleton.as_ref().and_then(singleton_name).map(str::to_string),
         singleton,
         guard: nonzero(storage_address(up, url, &safe, GUARD_SLOT).await),
+        module_guard: nonzero(storage_address(up, url, &safe, MODULE_GUARD_SLOT).await),
         fallback_handler: nonzero(storage_address(up, url, &safe, FALLBACK_HANDLER_SLOT).await),
         modules,
     })
@@ -128,6 +135,14 @@ pub fn state_risks(state: &SafeState) -> Vec<Risk> {
     }
     if let Some(g) = state.guard {
         risks.push(risk(Severity::Info, "safe_guard", "safe_guard", [("guard", short(&g))]));
+    }
+    if let Some(h) = state.fallback_handler
+        && crate::safe::fallback_handler_name(&h).is_none()
+    {
+        risks.push(risk(Severity::Warning, "safe_unknown_fallback_handler", "safe_unknown_fallback_handler", [("handler", h.to_checksum(None))]));
+    }
+    if let Some(g) = state.module_guard {
+        risks.push(risk(Severity::Info, "safe_module_guard", "safe_module_guard", [("guard", short(&g))]));
     }
     risks
 }
@@ -530,6 +545,43 @@ pub(crate) mod tests {
         doc["confirmations"] = json!([c.clone(), c]);
         let r = review(&up, "u", 1, SAFE, &doc).await.unwrap();
         assert_eq!(r.confirmations.iter().filter(|c| c.valid).count(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_safe_150_module_guard_is_read() {
+        // Safe v1.5.0 keeps a separate guard for module transactions.
+        let up = chain(2867, SINGLETONS[3].0, vec![]);
+        let module_guard = Address::repeat_byte(0x4d);
+        up.on_fn("eth_getStorageAt", move |req| {
+            let value = match req["params"][1].as_str().unwrap() {
+                "0x0" => format!("0x{:0>64}", hex::encode(SINGLETONS[3].0)),
+                MODULE_GUARD_SLOT => format!("0x{:0>64}", hex::encode(module_guard)),
+                _ => format!("0x{}", "0".repeat(64)),
+            };
+            Ok(json!({"jsonrpc":"2.0","id":req["id"],"result":value}))
+        });
+        let state = read_state(&up, "u", SAFE).await.unwrap();
+        assert_eq!(state.module_guard, Some(module_guard));
+        assert!(state_risks(&state).iter().any(|r| r.code == "safe_module_guard"), "{:?}", state_risks(&state));
+    }
+
+    #[test]
+    fn an_unknown_fallback_handler_is_flagged() {
+        use alloy_primitives::address;
+        let mut state = SafeState { singleton: Some(SINGLETONS[3].0), singleton_name: Some("Safe 1.3.0".into()), ..Default::default() };
+        let codes = |s: &SafeState| state_risks(s).into_iter().map(|r| (r.code, r.severity)).collect::<Vec<_>>();
+        // Official handlers, as used by real Safes: CompatibilityFallbackHandler 1.5.0
+        // and the Safe4337Module v0.3.0.
+        for official in [
+            address!("3EfCBb83A4A7AfcB4F68D501E2c2203a38be77f4"),
+            address!("75cf11467937ce3F2f357CE24ffc3DBF8fD5c226"),
+            address!("2f55e8b20D0B9FEFA187AA7d00B6Cbe563605bF5"),
+        ] {
+            state.fallback_handler = Some(official);
+            assert!(codes(&state).is_empty(), "{official}: {:?}", codes(&state));
+        }
+        state.fallback_handler = Some(Address::repeat_byte(0x66));
+        assert_eq!(codes(&state), vec![("safe_unknown_fallback_handler".to_string(), crate::decode::Severity::Warning)]);
     }
 
     #[tokio::test]

@@ -19,9 +19,8 @@ static ENGLISH: LazyLock<Dict> = LazyLock::new(|| parse("en", include_str!("../.
 static LOCALES: LazyLock<Vec<(&'static str, Dict)>> = LazyLock::new(|| {
     vec![
         ("zh-CN", parse("zh-CN", include_str!("../../../ui/src/i18n/locales/zh-CN.json"))),
-        ("zh-TW", parse("zh-TW", include_str!("../../../ui/src/i18n/locales/zh-TW.json"))),
-        ("it", parse("it", include_str!("../../../ui/src/i18n/locales/it.json"))),
-        ("fr", parse("fr", include_str!("../../../ui/src/i18n/locales/fr.json"))),
+        ("es", parse("es", include_str!("../../../ui/src/i18n/locales/es.json"))),
+        ("ru", parse("ru", include_str!("../../../ui/src/i18n/locales/ru.json"))),
         ("pt", parse("pt", include_str!("../../../ui/src/i18n/locales/pt.json"))),
     ]
 });
@@ -69,7 +68,7 @@ impl Text {
         self.localized("en")
     }
 
-    /// The rendering in `lang` (a code such as `zh-TW`), falling back to English.
+    /// The rendering in `lang` (a code such as `zh-CN`), falling back to English.
     pub fn localized(&self, lang: &str) -> String {
         let prefix: String = self.prefix.iter().map(|p| p.localized(lang)).collect();
         prefix + &render(template(lang, &self.key).unwrap_or(&self.key), &self.params)
@@ -130,7 +129,7 @@ mod tests {
     #[test]
     fn renders_in_the_chosen_language_and_falls_back_to_english() {
         let t = Text::new("risk.unlimited_approval", [("spender", "0xAbC…1234")]);
-        assert_eq!(t.localized("zh-TW"), "無限額度授權給 0xAbC…1234：它隨時可以轉走此代幣的全部餘額");
+        assert_eq!(t.localized("zh-CN"), "无限额度授权给 0xAbC…1234：它随时可以转走此代币的全部余额");
         assert_eq!(t.localized("xx"), t.english());
     }
 }

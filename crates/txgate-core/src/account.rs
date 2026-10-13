@@ -133,7 +133,7 @@ pub fn analyze_account_call(chain_id: u64, account: Address, input: &[u8]) -> Op
     let summary = match calls.as_slice() {
         [c] => format!("{} → {}", short(&account), c.summary),
         list => {
-            let names: Vec<String> = list.iter().map(|c| c.call.function.clone().or_else(|| c.call.selector.clone()).unwrap_or_else(|| "ETH".into())).collect();
+            let names: Vec<String> = list.iter().map(|c| c.call.function.clone().or_else(|| c.call.selector.clone()).unwrap_or_else(|| crate::providers::native_symbol(chain_id).into())).collect();
             format!("{} → {function} of {}: {}", short(&account), list.len(), names.join(", "))
         }
     };

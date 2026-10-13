@@ -535,17 +535,18 @@ pub fn analyze(tx: &TxFields, authorizations: &[Authorization], route_chain_id: 
     let summary = match (&safe, &account) {
         (Some(exec), _) => exec.analysis.summary.clone(),
         (None, Some(a)) => a.summary.clone(),
-        (None, None) => summarize(tx, &call),
+        (None, None) => summarize(tx, &call, route_chain_id),
     };
     Analysis { call, risks, summary, safe, account }
 }
 
-fn summarize(tx: &TxFields, call: &CallInfo) -> String {
+fn summarize(tx: &TxFields, call: &CallInfo, chain_id: u64) -> String {
     let target = match tx.to {
         Some(to) => short(&to),
         None => "new contract".into(),
     };
-    let eth = if tx.value.is_zero() { String::new() } else { format!(" · {} ETH", format_units(tx.value, 18)) };
+    let native = crate::providers::native_symbol(chain_id);
+    let eth = if tx.value.is_zero() { String::new() } else { format!(" · {} {native}", format_units(tx.value, 18)) };
     match (&call.function, &call.selector) {
         (Some(f), _) => {
             let args = call.args.iter().map(|a| match (a.value.parse::<Address>(), a.value.parse::<U256>()) {
@@ -648,6 +649,15 @@ mod tests {
         };
         assert!(codes(on).contains(&"approval_for_all".to_string()));
         assert!(codes(off).contains(&"revoke_approval".to_string()));
+    }
+
+    #[test]
+    fn value_is_shown_in_the_chain_native_currency() {
+        let tx = TxFields { to: Some(SPENDER), value: U256::from(15) * U256::from(10).pow(U256::from(17)), ..Default::default() };
+        assert!(analyze(&tx, &[], 56).summary.ends_with("· 1.5 BNB"), "{}", analyze(&tx, &[], 56).summary);
+        assert!(analyze(&tx, &[], 137).summary.ends_with("· 1.5 POL"));
+        assert!(analyze(&tx, &[], 8453).summary.ends_with("· 1.5 ETH"), "L2s pay in ETH");
+        assert!(analyze(&tx, &[], 999_999).summary.ends_with("· 1.5 ETH"), "unknown chains default to ETH");
     }
 
     #[test]

@@ -21,6 +21,31 @@ pub const KNOWN_CHAINS: &[(u64, &str)] = &[
     (324, "zkSync Era"),
 ];
 
+/// Native currencies that are not ETH. Every other chain (Ethereum, its
+/// testnets and the ETH-based L2s) pays in ETH.
+pub const NATIVE_CURRENCIES: &[(u64, &str)] = &[
+    (56, "BNB"),
+    (97, "tBNB"),
+    (137, "POL"),
+    (80002, "POL"),
+    (43114, "AVAX"),
+    (43113, "AVAX"),
+    (100, "xDAI"),
+    (5000, "MNT"),
+    (42220, "CELO"),
+    (146, "S"),
+    (250, "FTM"),
+    (25, "CRO"),
+    (1284, "GLMR"),
+    (2222, "KAVA"),
+    (80094, "BERA"),
+];
+
+/// Symbol of the chain's native currency.
+pub fn native_symbol(chain_id: u64) -> &'static str {
+    NATIVE_CURRENCIES.iter().find(|(id, _)| *id == chain_id).map_or("ETH", |(_, s)| s)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Provider {

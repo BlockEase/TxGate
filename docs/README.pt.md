@@ -1,6 +1,6 @@
 # TxGate
 
-[English](../README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [Italiano](README.it.md) | [Français](README.fr.md) | **Português**
+[English](../README.md) | [简体中文](README.zh-CN.md) | [Español](README.es.md) | [Русский](README.ru.md) | **Português**
 
 O guardião do RPC da sua carteira: inspecione cada pedido e aprove cada transação antes de ser transmitida.
 
@@ -24,7 +24,7 @@ O que a janela de aprovação mostra:
 - Uma comparação com a estimativa de gas feita antes pela carteira. Se forem diferentes, o front-end da dApp pode ter trocado a transação.
 - As alterações simuladas de saldos e autorizações, quando existe uma access key do Tenderly configurada.
 
-A interface, as mensagens de risco, os alertas Safe e as notificações de desktop estão disponíveis em English, 简体中文, 繁體中文, Italiano, Français e Português. O TxGate segue o idioma do sistema até escolher um em **Definições → Idioma**.
+A interface, as mensagens de risco, os alertas Safe e as notificações de desktop estão disponíveis em English, 简体中文, Español, Русский e Português. O TxGate segue o idioma do sistema até escolher um em **Definições → Idioma**.
 
 ### Safe multisig
 

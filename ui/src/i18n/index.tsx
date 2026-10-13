@@ -4,25 +4,23 @@
 
 import { createContext, Fragment, useContext, type ReactNode } from "react";
 import en from "./locales/en.json";
-import fr from "./locales/fr.json";
-import it from "./locales/it.json";
+import es from "./locales/es.json";
 import pt from "./locales/pt.json";
+import ru from "./locales/ru.json";
 import zhCN from "./locales/zh-CN.json";
-import zhTW from "./locales/zh-TW.json";
 
-export type Lang = "en" | "zh-CN" | "zh-TW" | "it" | "fr" | "pt";
+export type Lang = "en" | "zh-CN" | "es" | "ru" | "pt";
 
 /** Each language named in itself, so it can be found whatever is shown now. */
 export const LANGUAGES: { code: Lang; name: string }[] = [
   { code: "en", name: "English" },
   { code: "zh-CN", name: "简体中文" },
-  { code: "zh-TW", name: "繁體中文" },
-  { code: "it", name: "Italiano" },
-  { code: "fr", name: "Français" },
+  { code: "es", name: "Español" },
+  { code: "ru", name: "Русский" },
   { code: "pt", name: "Português" },
 ];
 
-const DICTS: Record<Lang, Record<string, string>> = { en, "zh-CN": zhCN, "zh-TW": zhTW, it, fr, pt };
+const DICTS: Record<Lang, Record<string, string>> = { en, "zh-CN": zhCN, es, ru, pt };
 
 export type Params = Record<string, string | number>;
 
@@ -40,9 +38,10 @@ export function isLang(v: unknown): v is Lang {
 /** The system language, mapped onto the supported ones. */
 export function systemLang(): Lang {
   const l = (navigator.language || "en").toLowerCase();
-  if (l.startsWith("zh")) return /tw|hk|mo|hant/.test(l) ? "zh-TW" : "zh-CN";
-  if (l.startsWith("it")) return "it";
-  if (l.startsWith("fr")) return "fr";
+  // Every Chinese locale, Traditional included, reads the Simplified translation.
+  if (l.startsWith("zh")) return "zh-CN";
+  if (l.startsWith("es")) return "es";
+  if (l.startsWith("ru")) return "ru";
   if (l.startsWith("pt")) return "pt";
   return "en";
 }

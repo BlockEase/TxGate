@@ -65,6 +65,10 @@ struct Snapshot {
     intercepted_methods: &'static [&'static str],
     providers: Vec<ProviderInfo>,
     known_chains: Vec<KnownChain>,
+    /// The running TxGate version.
+    version: &'static str,
+    /// Native currency symbols that are not ETH, by chain id.
+    native_currencies: &'static [(u64, &'static str)],
     config_path: String,
     db_path: String,
     lan_addresses: Vec<String>,
@@ -100,6 +104,8 @@ fn get_snapshot(state: State<'_, AppState>) -> Snapshot {
             .map(|p| ProviderInfo { id: *p, name: p.display_name(), chains: p.supported_chains() })
             .collect(),
         known_chains: KNOWN_CHAINS.iter().map(|(id, name)| KnownChain { chain_id: *id, name }).collect(),
+        native_currencies: txgate_core::providers::NATIVE_CURRENCIES,
+        version: env!("CARGO_PKG_VERSION"),
         config_path: state.config_path.display().to_string(),
         db_path: state.db_path.display().to_string(),
         lan_addresses: lan_addresses(),
@@ -284,6 +290,12 @@ struct TrayItems {
     quit: MenuItem<tauri::Wry>,
 }
 
+/// Asks GitHub for the latest TxGate release (only when the user clicks).
+#[tauri::command]
+async fn check_update() -> CmdResult<txgate_core::update::UpdateCheck> {
+    txgate_core::update::check_for_update(&HttpUpstream::new(), env!("CARGO_PKG_VERSION")).await
+}
+
 /// Called by the UI on start-up and whenever the language changes.
 #[tauri::command]
 fn set_ui_language(app: AppHandle, language: String) {
@@ -434,6 +446,7 @@ pub fn run() {
             query_history,
             clear_history,
             set_ui_language,
+            check_update,
             save_config,
             save_network,
             delete_network,

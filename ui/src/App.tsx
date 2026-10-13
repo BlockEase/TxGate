@@ -10,6 +10,7 @@ import { Monitor } from "./views/Monitor";
 import { Networks } from "./views/Networks";
 import { Safe } from "./views/Safe";
 import { Settings } from "./views/Settings";
+import { setNativeCurrencies } from "./format";
 import { I18nProvider, isLang, makeI18n, systemLang } from "./i18n";
 
 type View = "monitor" | "history" | "safe" | "networks" | "settings" | "about";
@@ -138,6 +139,7 @@ export default function App() {
         return api.snapshot();
       })
       .then((s) => {
+        setNativeCurrencies(s.native_currencies);
         setSnapshot(s);
         setRecent(s.recent);
         applyPending(s.pending);

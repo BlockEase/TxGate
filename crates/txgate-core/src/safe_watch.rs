@@ -82,6 +82,9 @@ pub fn diff_states(old: &SafeState, new: &SafeState) -> Vec<Finding> {
     if new.guard != old.guard {
         out.push(Finding::config(Severity::Danger, "guard_changed", [("old", opt(&old.guard)), ("new", opt(&new.guard))]));
     }
+    if new.module_guard != old.module_guard {
+        out.push(Finding::config(Severity::Danger, "module_guard_changed", [("old", opt(&old.module_guard)), ("new", opt(&new.module_guard))]));
+    }
     if new.fallback_handler != old.fallback_handler {
         out.push(Finding::config(Severity::Danger, "fallback_handler_changed", [("old", opt(&old.fallback_handler)), ("new", opt(&new.fallback_handler))]));
     }
@@ -380,6 +383,16 @@ mod tests {
         new.singleton_name = None;
         let f = diff_states(&state(), &new);
         assert_eq!(severities(&f), vec![(Severity::Danger, "config_change")]);
+    }
+
+    #[test]
+    fn a_module_guard_change_is_dangerous() {
+        // Safe v1.5.0: removing the module guard lets modules act unchecked.
+        let mut old = state();
+        old.module_guard = Some(Address::repeat_byte(0x4d));
+        let f = diff_states(&old, &state());
+        assert_eq!(severities(&f), vec![(Severity::Danger, "config_change")]);
+        assert!(f[0].message.contains("Module guard"), "{}", f[0].message);
     }
 
     #[test]

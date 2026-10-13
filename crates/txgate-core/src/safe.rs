@@ -75,6 +75,27 @@ pub fn singleton_name(addr: &Address) -> Option<&'static str> {
     SINGLETONS.iter().find(|(a, _)| a == addr).map(|(_, n)| *n)
 }
 
+/// Official fallback handlers (safe-deployments, safe-modules-deployments and
+/// CoW Protocol's composable-cow, whose ExtensibleFallbackHandler is Safe's own
+/// code and is used by Safes placing CoW TWAP / conditional orders).
+/// A fallback handler answers EIP-1271 signature checks for the Safe.
+pub const FALLBACK_HANDLERS: &[(Address, &str)] = &[
+    (address!("017062a1dE2FE6b99BE3d9d37841FeD19F573804"), "CompatibilityFallbackHandler 1.3.0"),
+    (address!("2f870a80647BbC554F3a0EBD093f11B4d2a7492A"), "CompatibilityFallbackHandler 1.3.0"),
+    (address!("f48f2B2d2a534e402487b3ee7C18c33Aec0Fe5e4"), "CompatibilityFallbackHandler 1.3.0"),
+    (address!("9301E98DD367135f21bdF66f342A249c9D5F9069"), "CompatibilityFallbackHandler 1.4.1"),
+    (address!("fd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99"), "CompatibilityFallbackHandler 1.4.1"),
+    (address!("3EfCBb83A4A7AfcB4F68D501E2c2203a38be77f4"), "CompatibilityFallbackHandler 1.5.0"),
+    (address!("85a8ca358D388530ad0fB95D0cb89Dd44Fc242c3"), "ExtensibleFallbackHandler 1.5.0"),
+    (address!("2f55e8b20D0B9FEFA187AA7d00B6Cbe563605bF5"), "ExtensibleFallbackHandler (CoW Protocol)"),
+    (address!("a581c4A4DB7175302464fF3C06380BC3270b4037"), "Safe4337Module 0.2.0"),
+    (address!("75cf11467937ce3F2f357CE24ffc3DBF8fD5c226"), "Safe4337Module 0.3.0"),
+];
+
+pub fn fallback_handler_name(addr: &Address) -> Option<&'static str> {
+    FALLBACK_HANDLERS.iter().find(|(a, _)| a == addr).map(|(_, n)| *n)
+}
+
 pub fn delegatecall_library(addr: &Address) -> Option<&'static str> {
     DELEGATECALL_LIBRARIES.iter().find(|(a, _)| a == addr).map(|(_, n)| *n)
 }
@@ -376,6 +397,7 @@ pub fn analyze_safe_tx(chain_id: u64, safe: Address, tx: &SafeTx) -> SafeTxAnaly
                 ("receiver", short(&tx.refund_receiver)),
                 ("gas_price", tx.gas_price.to_string()),
                 ("base_gas", tx.base_gas.to_string()),
+                ("native", crate::providers::native_symbol(chain_id).to_string()),
             ],
         ));
     }
@@ -388,7 +410,7 @@ pub fn analyze_safe_tx(chain_id: u64, safe: Address, tx: &SafeTx) -> SafeTxAnaly
         list => {
             let names: Vec<String> = list
                 .iter()
-                .map(|c| c.call.function.clone().or_else(|| c.call.selector.clone()).unwrap_or_else(|| format!("{} ETH", format_units(c.value, 18))))
+                .map(|c| c.call.function.clone().or_else(|| c.call.selector.clone()).unwrap_or_else(|| format!("{} {}", format_units(c.value, 18), crate::providers::native_symbol(chain_id))))
                 .collect();
             format!("Safe {} → batch of {}: {}", short(&safe), list.len(), names.join(", "))
         }
@@ -579,6 +601,14 @@ mod tests {
 
     fn codes(risks: &[Risk]) -> Vec<&str> {
         risks.iter().map(|r| r.code.as_str()).collect()
+    }
+
+    #[test]
+    fn gas_refunds_are_named_in_the_chain_currency() {
+        let tx = SafeTx { to: OWNERS[0], gas_price: U256::from(1), ..Default::default() };
+        let refund = |chain| analyze_safe_tx(chain, SAFE, &tx).risks.into_iter().find(|r| r.code == "safe_gas_refund").unwrap().message;
+        assert!(refund(56).contains("in BNB"), "{}", refund(56));
+        assert!(refund(1).contains("in ETH"), "{}", refund(1));
     }
 
     #[test]

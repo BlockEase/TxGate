@@ -19,8 +19,21 @@ pub const SEND_METHODS: &[&str] = &[
     "eth_sendUserOperation",
 ];
 
-/// Methods whose second parameter is the node account's password.
-pub const PASSWORD_METHODS: &[&str] = &["personal_sendTransaction"];
+/// Sending methods served by the read upstream once approved: an ERC-4337
+/// bundler or a node holding the account. Broadcast upstreams (e.g. Flashbots
+/// Protect) only relay signed transactions.
+pub const READ_UPSTREAM_SENDS: &[&str] = &["eth_sendUserOperation", "personal_sendTransaction"];
+
+/// Node-account methods and the positions of their secret parameters
+/// (passwords, private keys). These are forwarded as they are but never logged.
+pub const SECRET_PARAMS: &[(&str, &[usize])] = &[
+    ("personal_sendTransaction", &[1]),
+    ("personal_signTransaction", &[1]),
+    ("personal_sign", &[2]),
+    ("personal_unlockAccount", &[1]),
+    ("personal_importRawKey", &[0, 1]),
+    ("personal_newAccount", &[0]),
+];
 
 pub const ESTIMATE_METHOD: &str = "eth_estimateGas";
 

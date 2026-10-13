@@ -52,7 +52,7 @@ export function SafeHashBlock({ hashes, nonce }: { hashes: SafeHashes; nonce?: s
   );
 }
 
-function CallRow({ c, index, numbered }: { c: InnerCall; index: number; numbered: boolean }) {
+function CallRow({ c, index, numbered, chainId }: { c: InnerCall; index: number; numbered: boolean; chainId: number }) {
   const delegate = c.operation === 1;
   const fn = c.call.function ?? c.call.selector;
   return (
@@ -80,7 +80,7 @@ function CallRow({ c, index, numbered }: { c: InnerCall; index: number; numbered
         {toBig(c.value) > 0n && (
           <>
             <span>{t("panel.value")}</span>
-            <span>{eth(c.value)}</span>
+            <span>{eth(c.value, chainId)}</span>
           </>
         )}
         {!fn && toBig(c.value) === 0n && (
@@ -94,7 +94,7 @@ function CallRow({ c, index, numbered }: { c: InnerCall; index: number; numbered
   );
 }
 
-export function SafeCalls({ calls, batch, account }: { calls: InnerCall[]; batch: string | null; account?: boolean }) {
+export function SafeCalls({ calls, batch, account, chainId }: { calls: InnerCall[]; batch: string | null; account?: boolean; chainId: number }) {
   const title = account
     ? batch
       ? t("account.does_batch", { count: calls.length, function: batch })
@@ -106,7 +106,7 @@ export function SafeCalls({ calls, batch, account }: { calls: InnerCall[]; batch
     <div className="section">
       <h6>{title}</h6>
       {calls.map((c, i) => (
-        <CallRow key={i} c={c} index={i} numbered={calls.length > 1} />
+        <CallRow key={i} c={c} index={i} numbered={calls.length > 1} chainId={chainId} />
       ))}
     </div>
   );
@@ -156,6 +156,7 @@ export function SafeStateFacts({ state }: { state: SafeState }) {
         [t("panel.nonce"), toBig(state.nonce).toString()],
         [t("safe.implementation"), state.singleton_name ?? <span className="error-text">{t("safe.not_official", { address: state.singleton ?? t("safe.unknown") })}</span>],
         [t("safe.guard"), state.guard && <span className="mono">{state.guard}</span>],
+        [t("safe.module_guard"), state.module_guard && <span className="mono">{state.module_guard}</span>],
         [t("safe.modules"), state.modules.length > 0 && state.modules.map(shortAddr).join(", ")],
       ]}
     />
@@ -163,13 +164,13 @@ export function SafeStateFacts({ state }: { state: SafeState }) {
 }
 
 /** The calls a smart account would make (ERC-4337 / ERC-7579). */
-export function AccountSection({ tx }: { tx: TxView }) {
+export function AccountSection({ tx, chainId }: { tx: TxView; chainId: number }) {
   const a = tx.analysis.account;
-  return a ? <SafeCalls calls={a.calls} batch={a.batch} account /> : null;
+  return a ? <SafeCalls calls={a.calls} batch={a.batch} account chainId={chainId} /> : null;
 }
 
 /** Safe details of a decoded `execTransaction` or `approveHash` request. */
-export function SafeSection({ tx }: { tx: TxView }) {
+export function SafeSection({ tx, chainId }: { tx: TxView; chainId: number }) {
   const exec = tx.analysis.safe;
   const check = tx.enrichment?.safe;
   const approval = tx.enrichment?.safe_approval;
@@ -185,7 +186,7 @@ export function SafeSection({ tx }: { tx: TxView }) {
   if (!exec) return null;
   return (
     <>
-      <SafeCalls calls={exec.analysis.calls} batch={exec.analysis.batch} />
+      <SafeCalls calls={exec.analysis.calls} batch={exec.analysis.batch} chainId={chainId} />
       {check?.state && <SafeStateFacts state={check.state} />}
       {check?.hashes && <SafeHashBlock hashes={check.hashes} nonce={check.state?.nonce} />}
       {check && <Signatures title={t("safe.sigs_in_tx")} sigs={check.signatures} threshold={check.state?.threshold} />}
@@ -200,7 +201,7 @@ export function SafeReportBody({ report, showRisks = true }: { report: SafeTxRep
   return (
     <>
       {showRisks && <RiskList risks={sortRisks(report.risks)} />}
-      <SafeCalls calls={report.analysis.calls} batch={report.analysis.batch} />
+      <SafeCalls calls={report.analysis.calls} batch={report.analysis.batch} chainId={report.chain_id} />
       {toBig(report.tx.gas_price) > 0n && (
         <Facts
           rows={[

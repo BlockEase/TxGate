@@ -1,6 +1,6 @@
 # TxGate
 
-**English** | [简体中文](docs/README.zh-CN.md) | [繁體中文](docs/README.zh-TW.md) | [Italiano](docs/README.it.md) | [Français](docs/README.fr.md) | [Português](docs/README.pt.md)
+**English** | [简体中文](docs/README.zh-CN.md) | [Español](docs/README.es.md) | [Русский](docs/README.ru.md) | [Português](docs/README.pt.md)
 
 Your wallet's RPC TxGate: inspect every request, approve every transaction before it's broadcast.
 
@@ -24,7 +24,7 @@ What the approval dialog shows:
 - A comparison with the gas estimate the wallet made earlier. If the two differ, the dApp front-end may have swapped the transaction.
 - Simulated balance and approval changes, when a Tenderly access key is configured.
 
-The interface, risk messages, Safe alerts and desktop notifications are available in English, 简体中文, 繁體中文, Italiano, Français and Português. TxGate follows the system language until you pick one under **Settings → Language**.
+The interface, risk messages, Safe alerts and desktop notifications are available in English, 简体中文, Español, Русский and Português. TxGate follows the system language until you pick one under **Settings → Language**.
 
 ### Safe multisig
 

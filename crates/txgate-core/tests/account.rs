@@ -93,3 +93,30 @@ fn deeply_nested_account_calls_do_not_crash_the_analysis() {
         .expect("analysis must not overflow the stack");
     assert!(a.risks.iter().any(|r| r.code == "nesting_too_deep"), "{} bytes: {:?}", input_len, a.risks.iter().map(|r| &r.code).collect::<Vec<_>>());
 }
+
+#[test]
+fn erc7579_batches_are_unwrapped() {
+    use alloy_sol_types::{sol, SolCall};
+    sol! {
+        struct Execution { address target; uint256 value; bytes callData; }
+        function execute(bytes32 mode, bytes executionCalldata);
+        // Solidity's abi.encode(Execution[]) is this call's data without the selector.
+        function wrap(Execution[] executions);
+        function approve(address spender, uint256 amount);
+    }
+    let spender = address!("9e1F000000000000000000000000000000003c07");
+    let approve = approveCall { spender, amount: alloy_primitives::U256::MAX }.abi_encode();
+    let executions = vec![
+        Execution { target: USDC, value: alloy_primitives::U256::ZERO, callData: approve.into() },
+        Execution { target: spender, value: alloy_primitives::U256::from(5), callData: Bytes::new() },
+    ];
+    let encoded = wrapCall { executions }.abi_encode()[4..].to_vec();
+    let mut mode = [0u8; 32];
+    mode[0] = 0x01; // call type: batch
+    let input = executeCall { mode: mode.into(), executionCalldata: encoded.into() }.abi_encode();
+    let account = address!("BADA90b67D30074E9866A168d34CeA69737b928F");
+    let a = analyze(&TxFields { to: Some(account), input: input.into(), ..Default::default() }, &[], 1);
+    let calls = &a.account.as_ref().expect("unwrapped").calls;
+    assert_eq!(calls.iter().map(|c| c.to).collect::<Vec<_>>(), [USDC, spender]);
+    assert!(a.risks.iter().any(|r| r.code == "unlimited_approval" && r.message.starts_with("Call 1: ")), "{:?}", a.risks);
+}

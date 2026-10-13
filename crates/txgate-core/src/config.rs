@@ -22,7 +22,7 @@ pub struct Config {
     pub safe: SafeConfig,
     /// How far back an `eth_estimateGas` preview is considered when matching a send.
     pub preview_window_secs: u64,
-    /// Interface language (`en`, `zh-CN`, `zh-TW`, `it`, `fr`, `pt`); `None` follows the system.
+    /// Interface language (`en`, `zh-CN`, `es`, `ru`, `pt`); `None` follows the system.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
 }

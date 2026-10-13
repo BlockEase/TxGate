@@ -703,6 +703,90 @@ async fn user_operations_are_simulated_as_the_entry_point_calling_the_account() 
     let tenderly = txgate_core::simulate::request_body(1, &view.fields, view.entry_point).unwrap();
     assert_eq!(tenderly["from"].as_str().unwrap().to_lowercase(), entry_point.to_lowercase());
     assert_eq!(tenderly["to"].as_str().unwrap().to_lowercase(), sender);
+    // Wallets estimate UserOperations with eth_estimateUserOperationGas, never
+    // eth_estimateGas: a "no preview" note would always show and mean nothing.
+    assert_eq!(detail(&held).preview, None);
+    // Still searchable by address in History.
+    assert_eq!(held.from.as_deref().map(str::to_lowercase).as_deref(), Some(sender));
     engine.decide(held.id, Decision::Rejected).await.unwrap();
     wallet.await.unwrap();
+}
+
+#[tokio::test]
+async fn bundler_and_node_methods_go_to_the_read_upstream_once_approved() {
+    // Broadcast upstreams such as Flashbots Protect relay signed transactions;
+    // they are not ERC-4337 bundlers and hold no node accounts.
+    let cases = [
+        ("eth_sendUserOperation", json!([{"sender": "0x4de23f3f0fb3318287378adbde030cf61714b2f3", "callData": "0x"}, "0x0000000071727De22E5E9d8BAf0edAc6f37da032"]), READ_URL),
+        ("personal_sendTransaction", json!([{"from": "0x3f5CE5FBFe3E9af3971dD833D26bA9b5C936f0bE", "to": TX_TO}, "pw"]), READ_URL),
+        ("eth_sendRawTransaction", json!([RAW_TX]), SEND_URL),
+    ];
+    for (method, params, expected) in cases {
+        let (engine, up) = setup();
+        up.on(method, json!("0xok"));
+        let e = engine.clone();
+        let body = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
+        let wallet = tokio::spawn(async move { e.handle("1", "w".into(), body).await });
+        let held = wait_pending(&engine, 1).await.remove(0);
+        engine.decide(held.id, Decision::Approved).await.unwrap();
+        wallet.await.unwrap();
+        assert_eq!(up.calls_to(method)[0].0, expected, "{method}");
+    }
+}
+
+#[tokio::test]
+async fn node_account_secrets_are_never_logged() {
+    let (engine, up) = setup();
+    let mut c = engine.config();
+    c.logging.mode = LogMode::All;
+    engine.set_config(c).unwrap();
+    let key = "0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318";
+    let calls = [
+        ("personal_unlockAccount", json!(["0x3f5CE5FBFe3E9af3971dD833D26bA9b5C936f0bE", "hunter2", 300])),
+        ("personal_importRawKey", json!([key, "hunter2"])),
+        ("personal_newAccount", json!(["hunter2"])),
+        ("personal_sign", json!(["0x1234", "0x3f5CE5FBFe3E9af3971dD833D26bA9b5C936f0bE", "hunter2"])),
+        ("personal_signTransaction", json!([{"from": "0x3f5CE5FBFe3E9af3971dD833D26bA9b5C936f0bE"}, "hunter2"])),
+    ];
+    for (method, params) in calls {
+        up.on(method, json!(true));
+        engine.handle("1", "w".into(), json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params.clone()})).await;
+        // The node still gets what it needs.
+        assert_eq!(up.calls_to(method)[0].1["params"], params, "{method}");
+    }
+    let logged = serde_json::to_string(&(engine.recent(), engine.history(&HistoryQuery::default()).unwrap())).unwrap();
+    assert!(!logged.contains("hunter2"), "a password was logged");
+    assert!(!logged.contains(&key[2..]), "a private key was logged");
+}
+
+#[tokio::test]
+async fn an_approval_on_one_chain_is_not_reused_on_another() {
+    // A pre-EIP-155 transaction has no chain id: the same signature is valid on
+    // every chain, so approving it on mainnet must not approve it on Base.
+    const NO_CHAIN_ID_TX: &str = "0xf8a58085174876e800830186a08080b853604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf31ba02222222222222222222222222222222222222222222222222222222222222222a02222222222222222222222222222222222222222222222222222222222222222";
+    let (engine, up) = setup();
+    let mut c = engine.config();
+    c.networks.push(NetworkConfig {
+        chain_id: 8453,
+        name: "Base".into(),
+        read: RpcSource::Custom { url: READ_URL.into() },
+        broadcast: Some(RpcSource::Custom { url: SEND_URL.into() }),
+    });
+    engine.set_config(c).unwrap();
+    let send = || json!({"jsonrpc": "2.0", "id": 1, "method": "eth_sendRawTransaction", "params": [NO_CHAIN_ID_TX]});
+
+    let e = engine.clone();
+    let first = tokio::spawn(async move { e.handle("1", "w".into(), send()).await });
+    let held = wait_pending(&engine, 1).await.remove(0);
+    engine.decide(held.id, Decision::Approved).await.unwrap();
+    first.await.unwrap();
+    assert_eq!(up.calls_to("eth_sendRawTransaction").len(), 1);
+
+    // The same bytes sent to the Base endpoint wait for a new decision.
+    let e = engine.clone();
+    let replay = tokio::spawn(async move { e.handle("8453", "w".into(), send()).await });
+    let held = wait_pending(&engine, 1).await.remove(0);
+    assert_eq!(up.calls_to("eth_sendRawTransaction").len(), 1, "must not be forwarded without asking");
+    engine.decide(held.id, Decision::Rejected).await.unwrap();
+    replay.await.unwrap();
 }

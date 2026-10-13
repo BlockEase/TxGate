@@ -68,7 +68,7 @@ export function RecordPanel({
             rows={[
               [t("panel.contract"), tx.fields.to ?? t("panel.deploys")],
               [t("panel.from"), tx.fields.from ?? "—"],
-              [t("panel.value"), eth(tx.fields.value)],
+              [t("panel.value"), eth(tx.fields.value, record.chain_id)],
               [t("panel.nonce"), tx.fields.nonce],
               [t("panel.gas_limit"), tx.fields.gas_limit?.toLocaleString("en-US")],
               [t("panel.max_fee"), tx.max_fee_per_gas && gwei(tx.max_fee_per_gas)],
@@ -78,8 +78,8 @@ export function RecordPanel({
           />
           {record.category === "send" && <PreviewNote preview={detail?.preview ?? null} />}
           <Authorizations tx={tx} />
-          <AccountSection tx={tx} />
-          <SafeSection tx={tx} />
+          <AccountSection tx={tx} chainId={record.chain_id} />
+          <SafeSection tx={tx} chainId={record.chain_id} />
           <Params tx={tx} />
           <Effects outcome={detail?.simulation ?? null} onSimulate={simulate} busy={busy} canSimulate={tenderlyReady(config)} tokenSymbols={tokenSymbols(tx)} />
           {error && <span className="error-text">{error}</span>}
