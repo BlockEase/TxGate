@@ -51,7 +51,9 @@ pub enum Category {
 }
 
 pub fn classify(method: &str) -> Category {
-    if SEND_METHODS.contains(&method) {
+    // Some upstreams may match method names regardless of case. A sending method
+    // spelt differently is treated as sending, and `send_payload` refuses it.
+    if SEND_METHODS.iter().any(|m| m.eq_ignore_ascii_case(method)) {
         Category::Send
     } else if method == ESTIMATE_METHOD {
         Category::Estimate
@@ -152,9 +154,8 @@ pub fn send_payload(call: &Call) -> Result<SendPayload, String> {
             Ok(SendPayload::Signed(txs))
         }
         "mev_sendBundle" => {
-            // Entries are signed transactions ({tx}) or hashes of other bundles ({hash}).
-            let body = first.get("body").and_then(Value::as_array).ok_or("missing params[0].body")?;
-            let txs = body.iter().filter_map(|b| b.get("tx")).map(hex_tx).collect::<Result<Vec<_>, _>>()?;
+            let mut txs = Vec::new();
+            mev_bundle_txs(first, &hex_tx, &mut txs)?;
             if txs.is_empty() {
                 return Err("bundle has no transactions".into());
             }
@@ -168,6 +169,21 @@ pub fn send_payload(call: &Call) -> Result<SendPayload, String> {
         }
         other => Err(format!("{other} is not a sending method")),
     }
+}
+
+/// Signed transactions of a MEV-Share bundle. Body entries are a signed
+/// transaction ({tx}), the hash of another bundle ({hash}) or a whole nested
+/// bundle ({bundle}), whose transactions are broadcast as well.
+fn mev_bundle_txs(bundle: &Value, hex_tx: &dyn Fn(&Value) -> Result<Bytes, String>, out: &mut Vec<Bytes>) -> Result<(), String> {
+    let body = bundle.get("body").and_then(Value::as_array).ok_or("missing bundle body")?;
+    for entry in body {
+        if let Some(tx) = entry.get("tx") {
+            out.push(hex_tx(tx)?);
+        } else if let Some(nested) = entry.get("bundle") {
+            mev_bundle_txs(nested, hex_tx, out)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -213,6 +229,25 @@ mod tests {
 
         let unsigned = json!({"id":1,"method":"eth_sendTransaction","params":[{"from":"0x1"}]});
         assert!(matches!(send_payload(&call(unsigned)).unwrap(), SendPayload::Unsigned(_)));
+    }
+
+    #[test]
+    fn mev_bundles_include_transactions_of_nested_bundles() {
+        // MEV-Share bodies can nest whole bundles; their transactions are broadcast too.
+        let nested = json!({"id":1,"method":"mev_sendBundle","params":[{"body":[
+            {"tx":"0x01","canRevert":false},
+            {"hash":"0xabc"},
+            {"bundle":{"body":[{"tx":"0x02"},{"bundle":{"body":[{"tx":"0x03"}]}}]}}
+        ]}]});
+        let SendPayload::Signed(txs) = send_payload(&call(nested)).unwrap() else { panic!() };
+        assert_eq!(txs, vec![Bytes::from(vec![1]), Bytes::from(vec![2]), Bytes::from(vec![3])]);
+    }
+
+    #[test]
+    fn a_send_method_in_other_letter_case_is_never_forwarded_unchecked() {
+        let shouting = call(json!({"id":1,"method":"ETH_SENDRAWTRANSACTION","params":["0x01"]}));
+        assert_eq!(shouting.category(), Category::Send);
+        assert!(send_payload(&shouting).is_err(), "refused instead of forwarded");
     }
 
     #[test]

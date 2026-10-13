@@ -78,6 +78,28 @@ async fn read_calls_are_forwarded_to_the_read_upstream() {
 }
 
 #[tokio::test]
+async fn eth_call_is_decoded_so_it_can_be_simulated() {
+    let (engine, up) = setup();
+    up.on("eth_call", json!("0x01"));
+    let call = json!({"jsonrpc":"2.0","id":7,"method":"eth_call","params":[{"to": TX_TO, "data": TX_DATA, "value": "0x5"}, "latest"]});
+    let resp = engine.handle("1", "127.0.0.1".into(), call).await;
+    assert_eq!(resp["result"], "0x01");
+
+    let record = engine.recent().into_iter().find(|r| r.method == "eth_call").unwrap();
+    let tx = &detail(&record).txs[0];
+    assert_eq!(tx.fields.to.map(|a| a.to_string().to_lowercase()), Some(TX_TO.to_string()));
+    assert_eq!(tx.fields.input.to_string(), TX_DATA);
+    assert_eq!(tx.fields.value, alloy_primitives::U256::from(5));
+    // Reads stay cheap: no chain lookups for the call, and it is not a preview of a later send.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(up.calls_to("eth_getCode").is_empty());
+    let sent = engine.handle("1", "127.0.0.1".into(), send_raw(8));
+    tokio::pin!(sent);
+    let held = tokio::select! { _ = &mut sent => panic!("send must be held"), p = wait_pending(&engine, 1) => p };
+    assert_eq!(detail(&held[0]).preview, Some(PreviewMatch::NoPreview));
+}
+
+#[tokio::test]
 async fn log_mode_all_persists_reads() {
     let (engine, _) = setup();
     let mut c = engine.config();

@@ -4,10 +4,11 @@
 import { Fragment, useState, type ReactNode } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Config, RequestRecord } from "../api";
-import { clock, copyText, dateTime, eth, gwei, networkName, shortAddr, statusLabel, STATUS_TAG, tenderlyReady } from "../format";
+import { clock, copyText, dateTime, eth, gwei, networkName, statusLabel, STATUS_TAG, tenderlyReady } from "../format";
 import { AccountSection, SafeSection } from "./SafeParts";
-import { allRisks, Authorizations, Effects, Params, PreviewNote, RiskList, tokenSymbols, useSimulate } from "./TxParts";
+import { Authorizations, Effects, Params, PreviewNote, requestRisks, RiskList, tokenSymbols, useSimulate } from "./TxParts";
 import { t } from "../i18n";
+import { Address, OnChain } from "./Address";
 
 /** Label/value rows; rows whose value is null are left out. */
 export function Facts({ rows, className = "kv" }: { rows: [string, ReactNode][]; className?: string }) {
@@ -42,10 +43,17 @@ export function RecordPanel({
   const tx = detail?.txs[0];
   const call = tx?.analysis.call;
 
-  const title = tx ? `${tx.fields.to ? shortAddr(tx.fields.to) : t("panel.new_contract")} · ${call?.function ?? call?.selector ?? t("panel.transfer")}` : record.method;
+  const title = tx ? (
+    <>
+      {tx.fields.to ? <Address address={tx.fields.to} /> : t("panel.new_contract")} · {call?.function ?? call?.selector ?? t("panel.transfer")}
+    </>
+  ) : (
+    record.method
+  );
   const json = (v: unknown) => JSON.stringify(v, null, 2);
 
   return (
+    <OnChain id={record.chain_id}>
     <aside className="aside" aria-label={t("panel.label")}>
       <div className="aside-head">
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -66,8 +74,8 @@ export function RecordPanel({
         <>
           <Facts
             rows={[
-              [t("panel.contract"), tx.fields.to ?? t("panel.deploys")],
-              [t("panel.from"), tx.fields.from ?? "—"],
+              [t("panel.from"), tx.fields.from ? <Address address={tx.fields.from} full /> : t("panel.no_sender")],
+              [t("panel.to"), tx.fields.to ? <Address address={tx.fields.to} full /> : t("panel.deploys")],
               [t("panel.value"), eth(tx.fields.value, record.chain_id)],
               [t("panel.nonce"), tx.fields.nonce],
               [t("panel.gas_limit"), tx.fields.gas_limit?.toLocaleString("en-US")],
@@ -83,8 +91,8 @@ export function RecordPanel({
           <Params tx={tx} />
           <Effects outcome={detail?.simulation ?? null} onSimulate={simulate} busy={busy} canSimulate={tenderlyReady(config)} tokenSymbols={tokenSymbols(tx)} />
           {error && <span className="error-text">{error}</span>}
-          <RiskList risks={allRisks(tx)} />
-          {!tx.enrichment && <span className="fine">{t("panel.checking")}</span>}
+          <RiskList risks={requestRisks(detail?.txs ?? [tx])} />
+          {!tx.enrichment && record.category !== "read" && <span className="fine">{t("panel.checking")}</span>}
           {detail && detail.txs.length > 1 && <span className="text-muted">{t("panel.bundle", { count: detail.txs.length })}</span>}
           <div className="actions">
             <button className="btn btn-primary" onClick={() => openUrl(tx.simulator_url)}>
@@ -122,5 +130,6 @@ export function RecordPanel({
         <pre className="code-block">{record.response ? json(record.response) : t("panel.waiting")}</pre>
       </div>
     </aside>
+    </OnChain>
   );
 }

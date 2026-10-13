@@ -1,7 +1,7 @@
 // Sample data for running the UI in a plain browser (outside Tauri), used for
 // layout work and screenshots. Never active inside the desktop app.
 
-import type { Config, EngineEvent, RequestRecord, SafeAlert, SafeCheck, SafeExec, SafeTxReport, Snapshot, TxDetail, TxView, WatchStatus } from "./api";
+import type { AddressNote, Config, EngineEvent, RequestRecord, SafeAlert, SafeCheck, SafeExec, SafeTxReport, Snapshot, TxDetail, TxView, WatchStatus } from "./api";
 import safeDump from "./mock-safe.json";
 
 const ME = "0x3f5CE5FBFe3E9af3971dD833D26bA9b5C936f0bE";
@@ -69,14 +69,14 @@ const drainTx = view(
     ["spender", SPENDER],
     ["amount", (2n ** 256n - 1n).toString()],
   ],
-  [{ severity: "danger", code: "unlimited_approval", message: "Unlimited allowance to 0x9e1F…3c07: it can move all of this token at any time", text: { key: "risk.unlimited_approval", params: { spender: "0x9e1F…3c07" } } }],
+  [{ severity: "danger", code: "unlimited_approval", message: `Unlimited allowance to ${SPENDER}: it can move all of this token at any time`, text: { key: "risk.unlimited_approval", params: { spender: SPENDER } } }],
   {
     hash: "0x6f1e3d0c9a3b2e1f00c0ffee5a1e2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c",
     tx_type: "EIP-1559",
     max_fee_per_gas: "18400000000",
     fields: { from: ME, to: USDC, value: "0x0", input: "0x095ea7b3" + "0".repeat(128), nonce: 42, gas_limit: 46109, chain_id: 1 },
     enrichment: {
-      risks: [{ severity: "danger", code: "grantee_is_eoa", message: "Approval goes to 0x9e1F…3c07 — a plain account (EOA) with no contract code", text: { key: "risk.grantee_is_eoa", params: { address: "0x9e1F…3c07" } } }],
+      risks: [{ severity: "danger", code: "grantee_is_eoa", message: `Approval goes to ${SPENDER} — a plain account (EOA) with no contract code`, text: { key: "risk.grantee_is_eoa", params: { address: SPENDER } } }],
       token: { address: USDC, symbol: "USDC", decimals: 6 },
       formatted_args: [["amount", "Unlimited USDC"]],
       account_nonce: 42,
@@ -133,6 +133,16 @@ function rec(partial: Partial<RequestRecord>): RequestRecord {
 const reads = ["eth_blockNumber", "eth_getBalance", "eth_call", "eth_chainId", "eth_getTransactionCount", "eth_gasPrice", "eth_feeHistory"];
 const recent: RequestRecord[] = [];
 for (let i = 0; i < 9; i++) recent.push(rec({ method: reads[i % reads.length], summary: i % 3 === 1 ? `${ME.slice(0, 10)}…f0bE, latest` : "", chain_id: i % 5 === 4 ? 8453 : 1 }));
+// A dApp asking what an approval would do, without a sender.
+const callView = view(USDC, "approve", "approve(address,uint256)", [["spender", SPENDER], ["amount", "1000000"]], [], { enrichment: null, fields: { from: null, to: USDC, value: "0x0", input: "0x095ea7b3" + "0".repeat(128), nonce: null, gas_limit: null, chain_id: null } });
+for (const r of recent) {
+  if (r.method === "eth_call") {
+    r.request = { jsonrpc: "2.0", id: r.id, method: "eth_call", params: [{ to: USDC, data: callView.fields.input }, "latest"] };
+    r.summary = "{…}, latest";
+    r.to = USDC;
+    r.detail = { ...pendingDetail, txs: [callView], preview: null, simulation: null };
+  }
+}
 const swapView = view(ROUTER, "swapExactTokensForETH", "swapExactTokensForETH(uint256,uint256,address[],address,uint256)", [["amountIn", "1000000000"]], []);
 recent.push(
   rec({
@@ -199,7 +209,7 @@ const delegationView: TxView = {
   analysis: {
     call: { selector: "0xc4d66de8", signature: null, function: null, args: [] },
     risks: [
-      { severity: "danger", code: "eip7702_delegation", message: "EIP-7702: delegates account 0x4DE2…b2f3 to contract 0x84D05511614272694D3a9cebE896514DBDE51F40 on chain 1. That contract will fully control the account", text: { key: "risk.eip7702_delegation", params: { account: "0x4DE2…b2f3", delegate: "0x84D05511614272694D3a9cebE896514DBDE51F40", chain: "1" } } },
+      { severity: "danger", code: "eip7702_delegation", message: "EIP-7702: delegates account 0x4DE23f3f0fB3318287378AdbdE030cf61714b2f3 to contract 0x84D05511614272694D3a9cebE896514DBDE51F40 on chain 1. That contract will fully control the account", text: { key: "risk.eip7702_delegation", params: { account: "0x4DE23f3f0fB3318287378AdbdE030cf61714b2f3", delegate: "0x84D05511614272694D3a9cebE896514DBDE51F40", chain: "1" } } },
       { severity: "info", code: "unknown_function", message: "Calls an unrecognised function 0xc4d66de8", text: { key: "risk.unknown_function", params: { selector: "0xc4d66de8" } } },
     ],
     summary: "0x4DE2…b2f3 · 0xc4d66de8",
@@ -218,14 +228,29 @@ const heldDelegation = rec({
   response: null,
   detail: { ...pendingDetail, txs: [delegationView], preview: null, simulation: null },
 });
+// A bundle whose harmless first transaction is followed by a delegation.
+const heldBundle = rec({
+  method: "eth_sendBundle",
+  category: "send",
+  status: "pending",
+  duration_ms: null,
+  summary: `Bundle of 2 · ${swapView.analysis.summary}`,
+  from: ME,
+  to: ROUTER,
+  response: null,
+  detail: { ...pendingDetail, txs: [{ ...swapView, fields: { ...swapView.fields, from: ME, nonce: 42 } }, delegationView], preview: null, simulation: null },
+});
 recent.reverse();
+
+const addressNotes: AddressNote[] = [{ chain_id: 1, address: ME, note: "My hot wallet" }];
 
 export const mockSnapshot: Snapshot = {
   config,
   recent,
   // `#monitor-safetx` previews the dialog for a held Safe transaction.
+  // `#monitor-bundle` previews the dialog for a held two-transaction bundle.
   // `#monitor-7702` previews the dialog for a held EIP-7702 transaction.
-  pending: window.location.hash.includes("safetx") ? [heldSafe] : window.location.hash.includes("7702") ? [heldDelegation] : [held, heldSafe],
+  pending: window.location.hash.includes("bundle") ? [heldBundle] : window.location.hash.includes("safetx") ? [heldSafe] : window.location.hash.includes("7702") ? [heldDelegation] : [held, heldSafe],
   server: { listening: true, address: "127.0.0.1:8545", error: null },
   intercepted_methods: ["eth_sendRawTransaction", "eth_sendRawTransactionSync", "eth_sendRawTransactionConditional", "eth_sendTransaction", "eth_sendBundle", "eth_sendPrivateTransaction"],
   providers: [
@@ -236,6 +261,8 @@ export const mockSnapshot: Snapshot = {
   ],
   version: "0.1.1",
   native_currencies: [[56, "BNB"], [137, "POL"], [43114, "AVAX"], [100, "xDAI"]],
+  explorers: [[1, "https://etherscan.io"], [8453, "https://basescan.org"], [11155111, "https://sepolia.etherscan.io"]],
+  address_notes: addressNotes,
   known_chains: [
     { chain_id: 1, name: "Ethereum Mainnet" },
     { chain_id: 8453, name: "Base" },
@@ -253,8 +280,15 @@ export const mockSnapshot: Snapshot = {
 };
 
 /** Minimal command handler so every view renders in a browser. */
-export async function mockInvoke(cmd: string): Promise<unknown> {
+export async function mockInvoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
   switch (cmd) {
+    case "set_address_note": {
+      const { chainId, address, note } = args as { chainId: number; address: string; note: string };
+      const i = addressNotes.findIndex((n) => n.chain_id === chainId && n.address.toLowerCase() === address.toLowerCase());
+      if (i >= 0) addressNotes.splice(i, 1);
+      if (note.trim()) addressNotes.push({ chain_id: chainId, address, note: note.trim().slice(0, 100) });
+      return [...addressNotes];
+    }
     case "get_snapshot":
       return mockSnapshot;
     case "check_update":

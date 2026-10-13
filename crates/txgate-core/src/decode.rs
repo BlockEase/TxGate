@@ -387,8 +387,14 @@ pub fn short(addr: &Address) -> String {
     format!("{}…{}", &s[..6], &s[s.len() - 4..])
 }
 
-fn short_str(addr: &str) -> String {
-    addr.parse::<Address>().map(|a| short(&a)).unwrap_or_else(|_| addr.to_string())
+/// An address for a text parameter: checksummed and in full, so the UI can
+/// link it. Rendered text shortens it.
+pub fn full(addr: &Address) -> String {
+    addr.to_checksum(None)
+}
+
+fn full_str(addr: &str) -> String {
+    addr.parse::<Address>().map(|a| full(&a)).unwrap_or_else(|_| addr.to_string())
 }
 
 /// Analyses a transaction.
@@ -442,7 +448,7 @@ pub fn analyze(tx: &TxFields, authorizations: &[Authorization], route_chain_id: 
 
     for auth in authorizations {
         let any = if auth.chain_id.is_zero() { "_any_chain" } else { "" };
-        let account = auth.authority.as_ref().map(short).unwrap_or_else(|| "?".into());
+        let account = auth.authority.as_ref().map(full).unwrap_or_else(|| "?".into());
         let chain = auth.chain_id.to_string();
         if auth.address.is_zero() {
             risks.push(Risk::t(Severity::Info, "eip7702_revocation", &format!("eip7702_revocation{any}"), [("account", account), ("chain", chain)]));
@@ -470,10 +476,10 @@ pub fn analyze(tx: &TxFields, authorizations: &[Authorization], route_chain_id: 
     match func {
         "approve" | "increaseAllowance" => {
             let amount_key = if func == "approve" { "amount" } else { "addedValue" };
-            let spender = call.arg("spender").map(short_str).unwrap_or_default();
+            let spender = call.arg("spender").map(full_str).unwrap_or_default();
             let amount = call.arg(amount_key);
             if is_permit2_approve {
-                let token = call.arg("token").map(short_str).unwrap_or_default();
+                let token = call.arg("token").map(full_str).unwrap_or_default();
                 risks.push(Risk::t(Severity::Warning, "permit2_approval", "permit2_approval", [("token", token), ("spender", spender.clone())]));
                 if amount.is_some_and(is_unlimited) {
                     risks.push(Risk::t(Severity::Danger, "unlimited_approval", "unlimited_permit2", [("spender", spender)]));
@@ -487,7 +493,7 @@ pub fn analyze(tx: &TxFields, authorizations: &[Authorization], route_chain_id: 
             }
         }
         "setApprovalForAll" => {
-            let operator = call.arg("operator").map(short_str).unwrap_or_default();
+            let operator = call.arg("operator").map(full_str).unwrap_or_default();
             if call.arg("approved") == Some("true") {
                 risks.push(Risk::t(Severity::Danger, "approval_for_all", "approval_for_all", [("operator", operator)]));
             } else {
@@ -500,7 +506,7 @@ pub fn analyze(tx: &TxFields, authorizations: &[Authorization], route_chain_id: 
         "transfer" | "transferFrom" | "safeTransferFrom" => {
             if let (Some(recipient), Some(from)) = (call.arg("to"), tx.from)
                 && recipient.parse::<Address>().ok() != Some(from) {
-                    risks.push(Risk::t(Severity::Info, "token_transfer", "token_transfer", [("recipient", short_str(recipient))]));
+                    risks.push(Risk::t(Severity::Info, "token_transfer", "token_transfer", [("recipient", full_str(recipient))]));
                 }
         }
         "approveHash" => {
@@ -632,8 +638,9 @@ mod tests {
         let risk = analyze(&tx, &[], 1).risks.into_iter().find(|r| r.code == "unlimited_approval").unwrap();
         let text = risk.text.expect("translatable");
         assert_eq!(text.key, "risk.unlimited_approval");
-        assert_eq!(text.params.get("spender").map(String::as_str), Some("0x9E1f…3C07"));
-        assert_eq!(risk.message, "Unlimited allowance to 0x9E1f…3C07: it can move all of this token at any time");
+        // The full address, so the UI can link it.
+        assert_eq!(text.params.get("spender").map(String::as_str), Some(SPENDER.to_checksum(None).as_str()));
+        assert_eq!(risk.message, format!("Unlimited allowance to {}: it can move all of this token at any time", SPENDER.to_checksum(None)));
     }
 
     #[test]

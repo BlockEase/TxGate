@@ -319,7 +319,7 @@ fn unpack_multisend(data: &[u8]) -> Option<Vec<(u8, Address, U256, Bytes)>> {
 
 /// Risks of the Safe calling its own configuration functions.
 fn self_call_risk(input: &[u8]) -> Option<Risk> {
-    let a = |x: &Address| short(x);
+    let a = |x: &Address| crate::decode::full(x);
     if let Ok(c) = addOwnerWithThresholdCall::abi_decode(input) {
         return Some(risk(Severity::Warning, "safe_config_change", "safe_add_owner", [("owner", a(&c.owner)), ("threshold", c._threshold.to_string())]));
     }
@@ -407,8 +407,8 @@ pub fn analyze_safe_tx(chain_id: u64, safe: Address, tx: &SafeTx) -> SafeTxAnaly
             "safe_gas_refund",
             &format!("safe_gas_refund_{in_token}_{to}"),
             [
-                ("token", short(&tx.gas_token)),
-                ("receiver", short(&tx.refund_receiver)),
+                ("token", crate::decode::full(&tx.gas_token)),
+                ("receiver", crate::decode::full(&tx.refund_receiver)),
                 ("gas_price", tx.gas_price.to_string()),
                 ("base_gas", tx.base_gas.to_string()),
                 ("native", crate::providers::native_symbol(chain_id).to_string()),

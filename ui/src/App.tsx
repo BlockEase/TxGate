@@ -11,6 +11,7 @@ import { Networks } from "./views/Networks";
 import { Safe } from "./views/Safe";
 import { Settings } from "./views/Settings";
 import { setNativeCurrencies } from "./format";
+import { setAddressNotes, setExplorers } from "./components/Address";
 import { I18nProvider, isLang, makeI18n, systemLang } from "./i18n";
 
 type View = "monitor" | "history" | "safe" | "networks" | "settings" | "about";
@@ -120,6 +121,9 @@ export default function App() {
           api.snapshot().then((s) => setRecent(s.recent), () => {});
           setHistoryKey((k) => k + 1);
           break;
+        case "address_notes":
+          setAddressNotes(e.payload);
+          break;
         case "unroutable": {
           // Wallets poll every few seconds; say it once a minute per chain.
           const { chain_id, client, message } = e.payload;
@@ -140,6 +144,8 @@ export default function App() {
       })
       .then((s) => {
         setNativeCurrencies(s.native_currencies);
+        setExplorers(s.explorers);
+        setAddressNotes(s.address_notes);
         setSnapshot(s);
         setRecent(s.recent);
         applyPending(s.pending);

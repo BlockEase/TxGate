@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::config::SafeConfig;
-use crate::decode::{format_units, is_unlimited_amount, short, Analysis, Risk, Severity, TxFields};
+use crate::decode::{format_units, is_unlimited_amount, Analysis, Risk, Severity, TxFields};
 use crate::safe::approve_hash_arg;
 use crate::safe_service;
 use crate::safe_state::{check_exec, review_service_tx, SafeCheck, SafeTxReport};
@@ -148,7 +148,7 @@ pub async fn enrich(up: &dyn Upstream, read_url: &str, chain_id: u64, safe_cfg: 
     if let Some(to) = &tx.to {
         out.to_is_contract = has_code(up, read_url, to).await;
         if out.to_is_contract == Some(false) && !tx.input.is_empty() {
-            out.risks.push(Risk::t(Severity::Warning, "call_to_eoa", "call_to_eoa", [("address", short(to))]));
+            out.risks.push(Risk::t(Severity::Warning, "call_to_eoa", "call_to_eoa", [("address", crate::decode::full(to))]));
         }
 
         let is_permit2 = analysis.call.signature.as_deref() == Some("approve(address,address,uint160,uint48)");
@@ -171,7 +171,7 @@ pub async fn enrich(up: &dyn Upstream, read_url: &str, chain_id: u64, safe_cfg: 
     };
     if let Some(addr) = grantee.and_then(|a| a.parse::<Address>().ok())
         && has_code(up, read_url, &addr).await == Some(false) {
-            out.risks.push(Risk::t(Severity::Danger, "grantee_is_eoa", "grantee_is_eoa", [("address", short(&addr))]));
+            out.risks.push(Risk::t(Severity::Danger, "grantee_is_eoa", "grantee_is_eoa", [("address", crate::decode::full(&addr))]));
         }
 
     if let (Some(from), Some(nonce)) = (tx.from, tx.nonce) {

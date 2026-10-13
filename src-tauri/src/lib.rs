@@ -20,7 +20,7 @@ use txgate_core::decode::Severity;
 use txgate_core::record::{Decision, RequestRecord};
 use txgate_core::safe_state::SafeTxReport;
 use txgate_core::safe_watch::{SafeAlert, WatchStatus};
-use txgate_core::store::{HistoryQuery, Store};
+use txgate_core::store::{AddressNote, HistoryQuery, Store};
 use txgate_core::upstream::HttpUpstream;
 
 /// Name of the single event channel the UI listens on.
@@ -69,6 +69,9 @@ struct Snapshot {
     version: &'static str,
     /// Native currency symbols that are not ETH, by chain id.
     native_currencies: &'static [(u64, &'static str)],
+    /// Block explorer base URLs, by chain id.
+    explorers: &'static [(u64, &'static str)],
+    address_notes: Vec<AddressNote>,
     config_path: String,
     db_path: String,
     lan_addresses: Vec<String>,
@@ -105,6 +108,8 @@ fn get_snapshot(state: State<'_, AppState>) -> Snapshot {
             .collect(),
         known_chains: KNOWN_CHAINS.iter().map(|(id, name)| KnownChain { chain_id: *id, name }).collect(),
         native_currencies: txgate_core::providers::NATIVE_CURRENCIES,
+        explorers: txgate_core::providers::EXPLORERS,
+        address_notes: engine.address_notes().unwrap_or_default(),
         version: env!("CARGO_PKG_VERSION"),
         config_path: state.config_path.display().to_string(),
         db_path: state.db_path.display().to_string(),
@@ -133,6 +138,13 @@ async fn safe_queue(state: State<'_, AppState>, chain_id: u64, safe: String) -> 
 #[tauri::command]
 async fn safe_poll(state: State<'_, AppState>) -> CmdResult<Vec<WatchStatus>> {
     Ok(state.engine.poll_safes().await)
+}
+
+/// Sets the user's note on an address for one network; an empty note removes it.
+#[tauri::command]
+fn set_address_note(state: State<'_, AppState>, chain_id: u64, address: String, note: String) -> CmdResult<Vec<AddressNote>> {
+    let address = address.trim().parse().map_err(|_| "Not a valid address".to_string())?;
+    state.engine.set_address_note(chain_id, address, &note).map_err(err)
 }
 
 #[tauri::command]
@@ -455,6 +467,7 @@ pub fn run() {
             safe_queue,
             safe_poll,
             safe_alerts_read,
+            set_address_note,
         ])
         .build(tauri::generate_context!())
         .expect("error while building TxGate")

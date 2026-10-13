@@ -10,7 +10,7 @@ const browserPreview = import.meta.env.DEV && !("__TAURI_INTERNALS__" in window)
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   if (browserPreview) {
     const { mockInvoke } = await import("./mock");
-    return (await mockInvoke(cmd)) as T;
+    return (await mockInvoke(cmd, args)) as T;
   }
   return tauriInvoke<T>(cmd, args);
 }
@@ -356,6 +356,9 @@ export interface Snapshot {
   version: string;
   /** [chain id, symbol] for native currencies other than ETH. */
   native_currencies: [number, string][];
+  /** [chain id, block explorer base URL]. */
+  explorers: [number, string][];
+  address_notes: AddressNote[];
   config_path: string;
   db_path: string;
   lan_addresses: string[];
@@ -381,6 +384,13 @@ export type UpdateCheck =
   | { status: "up_to_date"; current: string; latest: string }
   | { status: "no_release"; current: string };
 
+/** The user's own label for an address on one network. */
+export interface AddressNote {
+  chain_id: number;
+  address: string;
+  note: string;
+}
+
 export type EngineEvent =
   | { type: "request"; payload: RequestRecord }
   | { type: "pending"; payload: RequestRecord[] }
@@ -388,7 +398,8 @@ export type EngineEvent =
   | { type: "server"; payload: ServerStatus }
   | { type: "safe_watch"; payload: WatchStatus[] }
   | { type: "safe_alert"; payload: SafeAlert }
-  | { type: "history_cleared" };
+  | { type: "history_cleared" }
+  | { type: "address_notes"; payload: AddressNote[] };
 
 export const api = {
   snapshot: () => invoke<Snapshot>("get_snapshot"),
@@ -408,6 +419,8 @@ export const api = {
   safeQueue: (chainId: number, safe: string) => invoke<SafeTxReport[]>("safe_queue", { chainId, safe }),
   safePoll: () => invoke<WatchStatus[]>("safe_poll"),
   safeAlertsRead: () => invoke<SafeAlert[]>("safe_alerts_read"),
+  /** An empty note removes it. */
+  setAddressNote: (chainId: number, address: string, note: string) => invoke<AddressNote[]>("set_address_note", { chainId, address, note }),
 };
 
 export async function onEngineEvent(handler: (e: EngineEvent) => void): Promise<UnlistenFn> {

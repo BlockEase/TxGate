@@ -3,10 +3,11 @@
 
 import { Fragment, useState } from "react";
 import type { CheckedSignature, InnerCall, SafeHashes, SafeState, SafeTxReport, TxView } from "../api";
-import { copyText, eth, shortAddr, toBig } from "../format";
+import { copyText, eth, toBig } from "../format";
 import { Facts } from "./RecordPanel";
 import { RiskList } from "./TxParts";
-import { t, tt } from "../i18n";
+import { t, tn } from "../i18n";
+import { Address, EngineText, OnChain, WithAddresses } from "./Address";
 
 /** A hash split into groups of four, as hardware wallets show it. */
 export function HashLine({ label, hash, primary }: { label: string; hash: string; primary?: boolean }) {
@@ -60,9 +61,7 @@ function CallRow({ c, index, numbered, chainId }: { c: InnerCall; index: number;
       <div className="row" style={{ flexWrap: "wrap" }}>
         {numbered && <span className="text-muted num">{index + 1}.</span>}
         <span className={delegate ? "tag tag-outline" : "tag tag-neutral"}>{delegate ? t("safe.delegatecall") : t("safe.call")}</span>
-        <span className="mono" title={c.to}>
-          {c.to}
-        </span>
+        <Address address={c.to} full />
       </div>
       <div className="args num">
         {fn && (
@@ -74,7 +73,9 @@ function CallRow({ c, index, numbered, chainId }: { c: InnerCall; index: number;
         {c.call.args.map((a) => (
           <Fragment key={a.name}>
             <span>{a.name}</span>
-            <span className="mono">{a.value}</span>
+            <span className="mono">
+              <WithAddresses text={a.value} full />
+            </span>
           </Fragment>
         ))}
         {toBig(c.value) > 0n && (
@@ -130,13 +131,16 @@ export function Signatures({ title, sigs, threshold }: { title: string; sigs: Ch
         {sigs.map((s, i) => (
           <Fragment key={i}>
             <span className={s.valid ? "ok-text" : "error-text"}>{s.valid ? t("safe.valid") : t("safe.invalid")}</span>
-            <span className="mono" title={s.signer ?? ""}>
-              {s.signer ?? t("safe.unrecoverable")}
-            </span>
+            <span>{s.signer ? <Address address={s.signer} full /> : t("safe.unrecoverable")}</span>
             <span className="fine">
               {t(`safe.sig_kind.${s.kind}`)}
               {!s.is_owner && s.signer ? ` · ${t("safe.not_owner")}` : ""}
-              {s.note ? ` · ${tt(s.note_text, s.note)}` : ""}
+              {s.note && (
+                <>
+                  {" · "}
+                  <EngineText text={s.note_text} fallback={s.note} />
+                </>
+              )}
             </span>
           </Fragment>
         ))}
@@ -150,14 +154,23 @@ export function SafeStateFacts({ state }: { state: SafeState }) {
     <Facts
       className="kv kv-wide"
       rows={[
-        [t("safe.safe"), <span className="mono">{state.address}</span>],
+        [t("safe.safe"), <Address address={state.address} full />],
         [t("safe.version"), state.version ?? t("safe.unknown")],
         [t("safe.owners"), t("safe.must_sign", { threshold: state.threshold, owners: state.owners.length })],
         [t("panel.nonce"), toBig(state.nonce).toString()],
-        [t("safe.implementation"), state.singleton_name ?? <span className="error-text">{t("safe.not_official", { address: state.singleton ?? t("safe.unknown") })}</span>],
-        [t("safe.guard"), state.guard && <span className="mono">{state.guard}</span>],
-        [t("safe.module_guard"), state.module_guard && <span className="mono">{state.module_guard}</span>],
-        [t("safe.modules"), state.modules.length > 0 && state.modules.map(shortAddr).join(", ")],
+        [t("safe.implementation"), state.singleton_name ?? <span className="error-text">{tn("safe.not_official", { address: state.singleton ? <Address address={state.singleton} full /> : t("safe.unknown") })}</span>],
+        [t("safe.guard"), state.guard && <Address address={state.guard} full />],
+        [t("safe.module_guard"), state.module_guard && <Address address={state.module_guard} full />],
+        [
+          t("safe.modules"),
+          state.modules.length > 0 &&
+            state.modules.map((m, i) => (
+              <Fragment key={m}>
+                {i > 0 && ", "}
+                <Address address={m} />
+              </Fragment>
+            )),
+        ],
       ]}
     />
   );
@@ -199,15 +212,15 @@ export function SafeSection({ tx, chainId }: { tx: TxView; chainId: number }) {
 export function SafeReportBody({ report, showRisks = true }: { report: SafeTxReport; showRisks?: boolean }) {
   const svc = report.service;
   return (
-    <>
+    <OnChain id={report.chain_id}>
       {showRisks && <RiskList risks={sortRisks(report.risks)} />}
       <SafeCalls calls={report.analysis.calls} batch={report.analysis.batch} chainId={report.chain_id} />
       {toBig(report.tx.gas_price) > 0n && (
         <Facts
           rows={[
             [t("safe.gas_price"), toBig(report.tx.gas_price).toString()],
-            [t("safe.gas_token"), report.tx.gas_token],
-            [t("safe.refund_to"), report.tx.refund_receiver],
+            [t("safe.gas_token"), <Address address={report.tx.gas_token} full />],
+            [t("safe.refund_to"), <Address address={report.tx.refund_receiver} full />],
           ]}
         />
       )}
@@ -217,14 +230,14 @@ export function SafeReportBody({ report, showRisks = true }: { report: SafeTxRep
         <Facts
           className="kv kv-wide"
           rows={[
-            [t("safe.proposed_by"), svc.proposer && <span className="mono">{svc.proposer}</span>],
+            [t("safe.proposed_by"), svc.proposer && <Address address={svc.proposer} full />],
             [t("safe.proposed_at"), svc.submission_date?.replace("T", " ").slice(0, 19)],
             [t("safe.service_note"), svc.origin && <span className="text-muted">{svc.origin}</span>],
           ]}
         />
       )}
       <Signatures title={t("safe.sigs_collected")} sigs={report.confirmations} threshold={report.state?.threshold} />
-    </>
+    </OnChain>
   );
 }
 

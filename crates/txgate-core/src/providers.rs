@@ -21,6 +21,36 @@ pub const KNOWN_CHAINS: &[(u64, &str)] = &[
     (324, "zkSync Era"),
 ];
 
+/// Block explorers, by chain id. An address page is `{base}/address/{address}`.
+pub const EXPLORERS: &[(u64, &str)] = &[
+    (1, "https://etherscan.io"),
+    (11155111, "https://sepolia.etherscan.io"),
+    (560048, "https://hoodi.etherscan.io"),
+    (8453, "https://basescan.org"),
+    (84532, "https://sepolia.basescan.org"),
+    (42161, "https://arbiscan.io"),
+    (421614, "https://sepolia.arbiscan.io"),
+    (10, "https://optimistic.etherscan.io"),
+    (11155420, "https://sepolia-optimism.etherscan.io"),
+    (137, "https://polygonscan.com"),
+    (80002, "https://amoy.polygonscan.com"),
+    (56, "https://bscscan.com"),
+    (97, "https://testnet.bscscan.com"),
+    (43114, "https://snowtrace.io"),
+    (43113, "https://testnet.snowtrace.io"),
+    (59144, "https://lineascan.build"),
+    (534352, "https://scrollscan.com"),
+    (324, "https://explorer.zksync.io"),
+    (100, "https://gnosisscan.io"),
+    (5000, "https://mantlescan.xyz"),
+    (42220, "https://celoscan.io"),
+    (146, "https://sonicscan.org"),
+    (25, "https://cronoscan.com"),
+    (80094, "https://berascan.com"),
+    (130, "https://uniscan.xyz"),
+    (81457, "https://blastscan.io"),
+];
+
 /// Native currencies that are not ETH. Every other chain (Ethereum, its
 /// testnets and the ETH-based L2s) pays in ETH.
 pub const NATIVE_CURRENCIES: &[(u64, &str)] = &[

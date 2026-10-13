@@ -31,7 +31,7 @@ use crate::record::{Decision, RequestRecord, Status, TxDetail, TxView};
 use crate::safe_state::{review, SafeTxReport};
 use crate::safe_watch::{check_safe, SafeAlert, WatchStatus};
 use crate::simulate::{self, web_simulator_url, SimulationOutcome};
-use crate::store::{HistoryQuery, Store};
+use crate::store::{AddressNote, HistoryQuery, Store};
 use crate::upstream::{self, Upstream};
 
 /// Number of recent requests kept in memory for the live monitor.
@@ -66,6 +66,8 @@ pub enum Event {
     SafeAlert(SafeAlert),
     /// The request history was cleared; only held transactions remain.
     HistoryCleared,
+    /// The user's address notes changed; carries all of them.
+    AddressNotes(Vec<AddressNote>),
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -446,6 +448,19 @@ impl Engine {
         let started = Instant::now();
         let mut record = self.base_record(ctx, &call);
         record.summary = read_summary(&call);
+        if call.method == "eth_call" {
+            // Decoded so the user can simulate what the dApp is asking about. Reads
+            // are frequent, so there are no chain lookups and it is not a preview.
+            let fields = call.param(0).map(TxFields::from_request).unwrap_or_default();
+            let auths = call.param(0).map(Authorization::list_from_request).unwrap_or_default();
+            record.from = fields.from.map(|a| a.to_checksum(None));
+            record.to = fields.to.map(|a| a.to_checksum(None));
+            let mut view = tx_view(ctx.chain_id, None, fields, &auths);
+            if view.fields.from.is_none() {
+                view.simulator_url = web_simulator_url(ctx.chain_id, &view.fields, Some(alloy_primitives::Address::ZERO));
+            }
+            record.detail = Some(TxDetail { txs: vec![view], ..Default::default() });
+        }
         let (resp, status) = self.forward(&ctx.network.read_url, &call).await;
         record.status = status;
         record.duration_ms = elapsed_ms(started);
@@ -651,6 +666,19 @@ impl Engine {
         Ok(self.0.store.safe_alerts(limit)?)
     }
 
+    /// The user's notes on addresses, per network.
+    pub fn address_notes(&self) -> Result<Vec<AddressNote>, EngineError> {
+        Ok(self.0.store.address_notes()?)
+    }
+
+    /// Sets (or, when empty, removes) the note of an address on one network.
+    pub fn set_address_note(&self, chain_id: u64, address: alloy_primitives::Address, note: &str) -> Result<Vec<AddressNote>, EngineError> {
+        self.0.store.set_address_note(chain_id, &address, note)?;
+        let notes = self.0.store.address_notes()?;
+        self.emit(Event::AddressNotes(notes.clone()));
+        Ok(notes)
+    }
+
     pub fn mark_safe_alerts_read(&self) -> Result<(), EngineError> {
         Ok(self.0.store.mark_safe_alerts_read()?)
     }
@@ -752,7 +780,9 @@ impl Engine {
             .and_then(|d| d.txs.into_iter().next())
             .ok_or(EngineError::NothingToSimulate(id))?;
         let tenderly = self.0.config.read().tenderly.clone();
-        let outcome = match simulate::simulate(&tenderly, record.chain_id, &tx.fields, tx.entry_point).await {
+        // An eth_call without a sender runs as the zero address on the node; simulate it the same way.
+        let caller = tx.entry_point.or((record.category == crate::jsonrpc::Category::Read && tx.fields.from.is_none()).then_some(alloy_primitives::Address::ZERO));
+        let outcome = match simulate::simulate(&tenderly, record.chain_id, &tx.fields, caller).await {
             Ok(result) => SimulationOutcome::Ok { result, ts_ms: now_ms() },
             Err(e) => SimulationOutcome::Error { message: e.to_string(), ts_ms: now_ms() },
         };
@@ -788,8 +818,6 @@ impl Drop for WaiterGuard {
     }
 }
 
-/// Decodes what a sending call would broadcast. Returns the detail and the key
-/// that identifies the same submission across wallet retries.
 /// Where an approved sending call goes.
 fn send_url<'a>(ctx: &'a Ctx, call: &Call) -> &'a str {
     if crate::jsonrpc::READ_UPSTREAM_SENDS.contains(&call.method.as_str()) { &ctx.network.read_url } else { &ctx.network.broadcast_url }
@@ -809,6 +837,8 @@ fn redact_passwords(call: &Call) -> Value {
     raw
 }
 
+/// Decodes what a sending call would broadcast. Returns the detail and the key
+/// that identifies the same submission across wallet retries.
 fn describe_send(chain_id: u64, payload: &SendPayload) -> (TxDetail, String) {
     let mut detail = TxDetail::default();
     let key = match payload {

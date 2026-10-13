@@ -6,7 +6,7 @@ use alloy_sol_types::{sol, SolCall};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::decode::{short, Risk, Severity};
+use crate::decode::{Risk, Severity};
 use crate::safe::{
     analyze_safe_tx, parse_signatures, safe_tx_hashes, singleton_name, uses_legacy_domain, SafeExec, SafeHashes, SafeSignature, SafeTx,
     SafeTxAnalysis, SignatureKind,
@@ -130,11 +130,11 @@ pub fn state_risks(state: &SafeState) -> Vec<Risk> {
         risks.push(risk(Severity::Info, "safe_official_modules", "safe_official_modules", [("modules", names.join(", "))]));
     }
     if !unknown.is_empty() {
-        let list: Vec<String> = unknown.iter().map(|m| short(m)).collect();
+        let list: Vec<String> = unknown.iter().map(|m| crate::decode::full(m)).collect();
         risks.push(risk(Severity::Warning, "safe_modules_enabled", "safe_modules_enabled", [("modules", list.join(", "))]));
     }
     if let Some(g) = state.guard {
-        risks.push(risk(Severity::Info, "safe_guard", "safe_guard", [("guard", short(&g))]));
+        risks.push(risk(Severity::Info, "safe_guard", "safe_guard", [("guard", crate::decode::full(&g))]));
     }
     if let Some(h) = state.fallback_handler
         && crate::safe::fallback_handler_name(&h).is_none()
@@ -142,7 +142,7 @@ pub fn state_risks(state: &SafeState) -> Vec<Risk> {
         risks.push(risk(Severity::Warning, "safe_unknown_fallback_handler", "safe_unknown_fallback_handler", [("handler", h.to_checksum(None))]));
     }
     if let Some(g) = state.module_guard {
-        risks.push(risk(Severity::Info, "safe_module_guard", "safe_module_guard", [("guard", short(&g))]));
+        risks.push(risk(Severity::Info, "safe_module_guard", "safe_module_guard", [("guard", crate::decode::full(&g))]));
     }
     risks
 }
@@ -189,7 +189,7 @@ pub async fn check_exec(up: &dyn Upstream, url: &str, chain_id: u64, exec: &Safe
                     Severity::Warning,
                     "safe_unreadable",
                     "safe_unreadable_exec",
-                    [("safe", short(&exec.safe)), ("error", e)],
+                    [("safe", crate::decode::full(&exec.safe)), ("error", e)],
                 )],
                 ..Default::default()
             };
@@ -248,7 +248,7 @@ pub async fn check_exec(up: &dyn Upstream, url: &str, chain_id: u64, exec: &Safe
                         Severity::Info,
                         "safe_contract_signature",
                         "safe_contract_signature",
-                        [("n", n.to_string()), ("signer", short(&sig.signer.unwrap_or_default()))],
+                        [("n", n.to_string()), ("signer", crate::decode::full(&sig.signer.unwrap_or_default()))],
                     ));
                 }
                 _ => {}
@@ -313,7 +313,7 @@ pub async fn review_tx(up: &dyn Upstream, url: &str, chain_id: u64, safe: Addres
                     Severity::Warning,
                     "safe_unreadable",
                     "safe_unreadable_review",
-                    [("safe", short(&safe)), ("error", e)],
+                    [("safe", crate::decode::full(&safe)), ("error", e)],
                 ));
                 None
             }
