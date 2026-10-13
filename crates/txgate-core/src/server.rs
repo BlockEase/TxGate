@@ -112,8 +112,12 @@ async fn rpc(State(engine): State<Engine>, ConnectInfo(addr): ConnectInfo<Socket
 /// cross-site POST, so without this check any page the user visits could
 /// spend their provider quota or flood the approval queue. Wallet extensions
 /// (`chrome-extension://`, `moz-extension://`, ...) and native apps (no
-/// Origin) pass, as do pages served from this machine.
+/// Origin) pass, as do pages served from this machine. `null` is refused:
+/// any website can send it from a sandboxed iframe or a `data:` URL.
 fn is_remote_web_page(origin: &str) -> bool {
+    if origin.trim() == "null" {
+        return true;
+    }
     let Some(rest) = origin.strip_prefix("https://").or_else(|| origin.strip_prefix("http://")) else {
         return false;
     };
@@ -157,7 +161,7 @@ mod tests {
         assert!(is_remote_web_page("http://192.168.1.4:3000"));
         assert!(!is_remote_web_page("chrome-extension://nkbihfbeogaeaoehlefnkodbefgpgknn"));
         assert!(!is_remote_web_page("moz-extension://1234"));
-        assert!(!is_remote_web_page("null"));
+        assert!(is_remote_web_page("null"), "sandboxed iframes on any site send Origin: null");
         assert!(!is_remote_web_page("http://localhost:5173"));
         assert!(!is_remote_web_page("http://127.0.0.1:8080"));
         assert!(!is_remote_web_page("http://[::1]:3000"));

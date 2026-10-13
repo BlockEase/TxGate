@@ -1,7 +1,7 @@
 {
   "name": "txgate",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "scripts": {
     "setup": "npm install && npm --prefix ui install",
     "dev": "tauri dev",

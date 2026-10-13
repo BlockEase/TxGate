@@ -1,12 +1,12 @@
 [package]
 name = "txgate-core"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 
 [dependencies]
 alloy-consensus = { version = "2.5.0", features = ["k256", "serde"] }
 alloy-eips = { version = "2.5.0", features = ["k256", "serde"] }
-alloy-primitives = { version = "1.7.3", features = ["serde"] }
+alloy-primitives = { version = "1.7.3", features = ["serde", "k256"] }
 alloy-rlp = "0.3.16"
 alloy-sol-types = "1.7.3"
 async-trait = "0.1.92"

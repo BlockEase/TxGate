@@ -1,0 +1,516 @@
+{
+  "check": {
+    "hashes": {
+      "domain_hash": "0x561d71a273896bbd4ecfb3e135730658c966531ed15bdee93660d109a8970f01",
+      "message_hash": "0x170791a2af60dfbea29485850f0e3f2be5bd14580ee51c6405ce9e7119c355ec",
+      "safe_tx_hash": "0xa15d670d17621751bb88f493f8b305c5bde4eeaa7aa4f9875da4d9bd2fad39b0"
+    },
+    "risks": [],
+    "signatures": [
+      {
+        "error": null,
+        "is_owner": true,
+        "kind": "eip712",
+        "note": null,
+        "signer": "0x4e288c2abc77a4d7c5583cdc9792731220a088cf",
+        "valid": true
+      },
+      {
+        "error": null,
+        "is_owner": true,
+        "kind": "eip712",
+        "note": null,
+        "signer": "0x964ae5ab627f1d536d5d5796734b7a44ad6531e3",
+        "valid": true
+      },
+      {
+        "error": null,
+        "is_owner": true,
+        "kind": "approved_hash",
+        "note": "The sender of this transaction",
+        "note_text": {
+          "key": "signature.sender"
+        },
+        "signer": "0xed5ddb58f3131274597ee59c98a073ce3c5d1cb9",
+        "valid": true
+      }
+    ],
+    "state": {
+      "address": "0x849d52316331967b6ff1198e5e32a0eb168d039d",
+      "fallback_handler": null,
+      "guard": null,
+      "modules": [],
+      "nonce": "0xb33",
+      "owners": [
+        "0x964ae5ab627f1d536d5d5796734b7a44ad6531e3",
+        "0xed5ddb58f3131274597ee59c98a073ce3c5d1cb9",
+        "0x1b0c638616ed79db430edbf549ad9512ff4a8ed1",
+        "0x4e288c2abc77a4d7c5583cdc9792731220a088cf",
+        "0xbab04858c4ebbb226dd12b38639e59450820536f",
+        "0xe9eb7da58f6b5ce5b0a6cfd778a2fa726203aad5"
+      ],
+      "singleton": "0xd9db270c1b5e3bd161e8c8503c55ceabee709552",
+      "singleton_name": "Safe 1.3.0",
+      "threshold": 3,
+      "version": "1.3.0"
+    },
+    "valid_signatures": 3
+  },
+  "evil": {
+    "analysis": {
+      "batch": null,
+      "calls": [
+        {
+          "call": {
+            "args": [
+              {
+                "name": "to",
+                "value": "0xbDd077f651EBe7f7b3cE16fe5F2b025BE2969516"
+              },
+              {
+                "name": "amount",
+                "value": "0"
+              }
+            ],
+            "function": "transfer",
+            "selector": "0xa9059cbb",
+            "signature": "transfer(address,uint256)"
+          },
+          "data": "0xa9059cbb000000000000000000000000bdd077f651ebe7f7b3ce16fe5f2b025be29695160000000000000000000000000000000000000000000000000000000000000000",
+          "operation": 1,
+          "summary": "0x9622…7242 · transfer(0xbDd0…9516, 0)",
+          "to": "0x96221423681a6d52e184d440a8efcebb105c7242",
+          "value": "0x0"
+        }
+      ],
+      "risks": [
+        {
+          "code": "safe_delegatecall",
+          "message": "DELEGATECALL to 0x96221423681A6d52E184D440a8eFCEbB105C7242: its code runs as the Safe itself and can replace the owners, the implementation or drain everything (the Bybit attack)",
+          "severity": "danger",
+          "text": {
+            "key": "risk.safe_delegatecall",
+            "params": {
+              "target": "0x96221423681A6d52E184D440a8eFCEbB105C7242"
+            }
+          }
+        },
+        {
+          "code": "token_transfer",
+          "message": "Sends tokens to 0xbDd0…9516",
+          "severity": "info",
+          "text": {
+            "key": "risk.token_transfer",
+            "params": {
+              "recipient": "0xbDd0…9516"
+            }
+          }
+        }
+      ],
+      "summary": "Safe 0x849D…039d → DELEGATECALL 0x9622…7242 · transfer(0xbDd0…9516, 0)"
+    },
+    "chain_id": 1,
+    "confirmations": [],
+    "hashes": {
+      "domain_hash": "0x561d71a273896bbd4ecfb3e135730658c966531ed15bdee93660d109a8970f01",
+      "message_hash": "0xb1423caefe98f032619853b5373a04592880e16985da7dbd72c530953eb69f2c",
+      "safe_tx_hash": "0xd9151ac63052a9881b37423c4f2343caed4c798ca72de0ff6b799929cf69694e"
+    },
+    "risks": [
+      {
+        "code": "safe_delegatecall",
+        "message": "DELEGATECALL to 0x96221423681A6d52E184D440a8eFCEbB105C7242: its code runs as the Safe itself and can replace the owners, the implementation or drain everything (the Bybit attack)",
+        "severity": "danger",
+        "text": {
+          "key": "risk.safe_delegatecall",
+          "params": {
+            "target": "0x96221423681A6d52E184D440a8eFCEbB105C7242"
+          }
+        }
+      },
+      {
+        "code": "token_transfer",
+        "message": "Sends tokens to 0xbDd0…9516",
+        "severity": "info",
+        "text": {
+          "key": "risk.token_transfer",
+          "params": {
+            "recipient": "0xbDd0…9516"
+          }
+        }
+      },
+      {
+        "code": "safe_nonce_queued",
+        "message": "The Safe is at nonce 2867: transaction 2867 must execute first",
+        "severity": "info",
+        "text": {
+          "key": "risk.safe_nonce_queued_one",
+          "params": {
+            "current": "2867",
+            "last": "2867"
+          }
+        }
+      },
+      {
+        "code": "safe_service_hash_mismatch",
+        "message": "The Safe Transaction Service reports hash 0xa15d670d17621751bb88f493f8b305c5bde4eeaa7aa4f9875da4d9bd2fad39b0 but the fields it returned hash to 0xd9151ac63052a9881b37423c4f2343caed4c798ca72de0ff6b799929cf69694e: the service or the data has been tampered with",
+        "severity": "danger",
+        "text": {
+          "key": "risk.safe_service_hash_mismatch",
+          "params": {
+            "computed": "0xd9151ac63052a9881b37423c4f2343caed4c798ca72de0ff6b799929cf69694e",
+            "reported": "0xa15d670d17621751bb88f493f8b305c5bde4eeaa7aa4f9875da4d9bd2fad39b0"
+          }
+        }
+      }
+    ],
+    "safe": "0x849d52316331967b6ff1198e5e32a0eb168d039d",
+    "service": {
+      "origin": null,
+      "proposer": "0x964ae5ab627f1d536d5d5796734b7a44ad6531e3",
+      "reported_hash": "0xa15d670d17621751bb88f493f8b305c5bde4eeaa7aa4f9875da4d9bd2fad39b0",
+      "submission_date": null
+    },
+    "state": {
+      "address": "0x849d52316331967b6ff1198e5e32a0eb168d039d",
+      "fallback_handler": null,
+      "guard": null,
+      "modules": [],
+      "nonce": "0xb33",
+      "owners": [
+        "0x964ae5ab627f1d536d5d5796734b7a44ad6531e3",
+        "0xed5ddb58f3131274597ee59c98a073ce3c5d1cb9",
+        "0x1b0c638616ed79db430edbf549ad9512ff4a8ed1",
+        "0x4e288c2abc77a4d7c5583cdc9792731220a088cf",
+        "0xbab04858c4ebbb226dd12b38639e59450820536f",
+        "0xe9eb7da58f6b5ce5b0a6cfd778a2fa726203aad5"
+      ],
+      "singleton": "0xd9db270c1b5e3bd161e8c8503c55ceabee709552",
+      "singleton_name": "Safe 1.3.0",
+      "threshold": 3,
+      "version": "1.3.0"
+    },
+    "tx": {
+      "base_gas": "0x0",
+      "data": "0xa9059cbb000000000000000000000000bdd077f651ebe7f7b3ce16fe5f2b025be29695160000000000000000000000000000000000000000000000000000000000000000",
+      "gas_price": "0x0",
+      "gas_token": "0x0000000000000000000000000000000000000000",
+      "nonce": "0xb34",
+      "operation": 1,
+      "refund_receiver": "0x0000000000000000000000000000000000000000",
+      "safe_tx_gas": "0x0",
+      "to": "0x96221423681a6d52e184d440a8efcebb105c7242",
+      "value": "0x0"
+    }
+  },
+  "exec": {
+    "analysis": {
+      "batch": "MultiSendCallOnly 1.3.0",
+      "calls": [
+        {
+          "call": {
+            "args": [],
+            "function": null,
+            "selector": "0xaa9224cd",
+            "signature": null
+          },
+          "data": "0xaa9224cd0000000000000000000000000000000000000000000000000000000000000000",
+          "operation": 0,
+          "summary": "0x0a7C…59b2 · 0xaa9224cd",
+          "to": "0x0a7cb434f96f65972d46a5c1a64a9654dc9959b2",
+          "value": "0x0"
+        },
+        {
+          "call": {
+            "args": [
+              {
+                "name": "to",
+                "value": "0x458cD345B4C05e8DF39d0A07220feb4Ec19F5e6f"
+              },
+              {
+                "name": "amount",
+                "value": "39000000000000000000000000"
+              }
+            ],
+            "function": "transfer",
+            "selector": "0xa9059cbb",
+            "signature": "transfer(address,uint256)"
+          },
+          "data": "0xa9059cbb000000000000000000000000458cd345b4c05e8df39d0a07220feb4ec19f5e6f0000000000000000000000000000000000000000002042923c81383387000000",
+          "operation": 0,
+          "summary": "0x5aFE…eEEe · transfer(0x458c…5e6f, 39000000000000000000000000)",
+          "to": "0x5afe3855358e112b5647b952709e6165e1c1eeee",
+          "value": "0x0"
+        }
+      ],
+      "risks": [
+        {
+          "code": "safe_batch",
+          "message": "Batch of 2 calls through the official MultiSendCallOnly 1.3.0",
+          "severity": "info",
+          "text": {
+            "key": "risk.safe_batch",
+            "params": {
+              "count": "2",
+              "library": "MultiSendCallOnly 1.3.0"
+            }
+          }
+        },
+        {
+          "code": "unknown_function",
+          "message": "Call 1: Calls an unrecognised function 0xaa9224cd",
+          "severity": "info",
+          "text": {
+            "key": "risk.unknown_function",
+            "params": {
+              "selector": "0xaa9224cd"
+            },
+            "prefix": [
+              {
+                "key": "prefix.call",
+                "params": {
+                  "n": "1"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "code": "token_transfer",
+          "message": "Call 2: Sends tokens to 0x458c…5e6f",
+          "severity": "info",
+          "text": {
+            "key": "risk.token_transfer",
+            "params": {
+              "recipient": "0x458c…5e6f"
+            },
+            "prefix": [
+              {
+                "key": "prefix.call",
+                "params": {
+                  "n": "2"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "summary": "Safe 0x849D…039d → batch of 2: 0xaa9224cd, transfer"
+    },
+    "safe": "0x849d52316331967b6ff1198e5e32a0eb168d039d",
+    "signatures": "0x37b9079718c3e23fccf78990c8b27bae9779348026a97ac5a37a89f0164de9aa3926ae0f500c351808be62a838d6f54b1fa7e4072bdbc6ca15e7f25f068c171d1ba51db4a84de84081833627336ff5d1b49a4acc0f60164ab705cd71f1ff672e7367b50680602f230ca982ca95050142211a662f52c4aa8890c5e737459ba6a5281c000000000000000000000000ed5ddb58f3131274597ee59c98a073ce3c5d1cb9000000000000000000000000000000000000000000000000000000000000000001",
+    "tx": {
+      "base_gas": "0x0",
+      "data": "0x8d80ff0a00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000112000a7cb434f96f65972d46a5c1a64a9654dc9959b200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000024aa9224cd0000000000000000000000000000000000000000000000000000000000000000005afe3855358e112b5647b952709e6165e1c1eeee00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000044a9059cbb000000000000000000000000458cd345b4c05e8df39d0a07220feb4ec19f5e6f0000000000000000000000000000000000000000002042923c813833870000000000000000000000000000000000",
+      "gas_price": "0x0",
+      "gas_token": "0x0000000000000000000000000000000000000000",
+      "nonce": "0x0",
+      "operation": 1,
+      "refund_receiver": "0x0000000000000000000000000000000000000000",
+      "safe_tx_gas": "0x0",
+      "to": "0x40a2accbd92bca938b02010e17a5b8929b49130d",
+      "value": "0x0"
+    }
+  },
+  "queued": {
+    "analysis": {
+      "batch": "MultiSendCallOnly 1.3.0",
+      "calls": [
+        {
+          "call": {
+            "args": [],
+            "function": null,
+            "selector": "0xaa9224cd",
+            "signature": null
+          },
+          "data": "0xaa9224cd0000000000000000000000000000000000000000000000000000000000000000",
+          "operation": 0,
+          "summary": "0x0a7C…59b2 · 0xaa9224cd",
+          "to": "0x0a7cb434f96f65972d46a5c1a64a9654dc9959b2",
+          "value": "0x0"
+        },
+        {
+          "call": {
+            "args": [
+              {
+                "name": "to",
+                "value": "0x458cD345B4C05e8DF39d0A07220feb4Ec19F5e6f"
+              },
+              {
+                "name": "amount",
+                "value": "39000000000000000000000000"
+              }
+            ],
+            "function": "transfer",
+            "selector": "0xa9059cbb",
+            "signature": "transfer(address,uint256)"
+          },
+          "data": "0xa9059cbb000000000000000000000000458cd345b4c05e8df39d0a07220feb4ec19f5e6f0000000000000000000000000000000000000000002042923c81383387000000",
+          "operation": 0,
+          "summary": "0x5aFE…eEEe · transfer(0x458c…5e6f, 39000000000000000000000000)",
+          "to": "0x5afe3855358e112b5647b952709e6165e1c1eeee",
+          "value": "0x0"
+        }
+      ],
+      "risks": [
+        {
+          "code": "safe_batch",
+          "message": "Batch of 2 calls through the official MultiSendCallOnly 1.3.0",
+          "severity": "info",
+          "text": {
+            "key": "risk.safe_batch",
+            "params": {
+              "count": "2",
+              "library": "MultiSendCallOnly 1.3.0"
+            }
+          }
+        },
+        {
+          "code": "unknown_function",
+          "message": "Call 1: Calls an unrecognised function 0xaa9224cd",
+          "severity": "info",
+          "text": {
+            "key": "risk.unknown_function",
+            "params": {
+              "selector": "0xaa9224cd"
+            },
+            "prefix": [
+              {
+                "key": "prefix.call",
+                "params": {
+                  "n": "1"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "code": "token_transfer",
+          "message": "Call 2: Sends tokens to 0x458c…5e6f",
+          "severity": "info",
+          "text": {
+            "key": "risk.token_transfer",
+            "params": {
+              "recipient": "0x458c…5e6f"
+            },
+            "prefix": [
+              {
+                "key": "prefix.call",
+                "params": {
+                  "n": "2"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "summary": "Safe 0x849D…039d → batch of 2: 0xaa9224cd, transfer"
+    },
+    "chain_id": 1,
+    "confirmations": [
+      {
+        "error": null,
+        "is_owner": true,
+        "kind": "eip712",
+        "note": null,
+        "signer": "0x964ae5ab627f1d536d5d5796734b7a44ad6531e3",
+        "valid": true
+      }
+    ],
+    "hashes": {
+      "domain_hash": "0x561d71a273896bbd4ecfb3e135730658c966531ed15bdee93660d109a8970f01",
+      "message_hash": "0x170791a2af60dfbea29485850f0e3f2be5bd14580ee51c6405ce9e7119c355ec",
+      "safe_tx_hash": "0xa15d670d17621751bb88f493f8b305c5bde4eeaa7aa4f9875da4d9bd2fad39b0"
+    },
+    "risks": [
+      {
+        "code": "safe_batch",
+        "message": "Batch of 2 calls through the official MultiSendCallOnly 1.3.0",
+        "severity": "info",
+        "text": {
+          "key": "risk.safe_batch",
+          "params": {
+            "count": "2",
+            "library": "MultiSendCallOnly 1.3.0"
+          }
+        }
+      },
+      {
+        "code": "unknown_function",
+        "message": "Call 1: Calls an unrecognised function 0xaa9224cd",
+        "severity": "info",
+        "text": {
+          "key": "risk.unknown_function",
+          "params": {
+            "selector": "0xaa9224cd"
+          },
+          "prefix": [
+            {
+              "key": "prefix.call",
+              "params": {
+                "n": "1"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "code": "token_transfer",
+        "message": "Call 2: Sends tokens to 0x458c…5e6f",
+        "severity": "info",
+        "text": {
+          "key": "risk.token_transfer",
+          "params": {
+            "recipient": "0x458c…5e6f"
+          },
+          "prefix": [
+            {
+              "key": "prefix.call",
+              "params": {
+                "n": "2"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "safe": "0x849d52316331967b6ff1198e5e32a0eb168d039d",
+    "service": {
+      "origin": null,
+      "proposer": "0x964ae5ab627f1d536d5d5796734b7a44ad6531e3",
+      "reported_hash": "0xa15d670d17621751bb88f493f8b305c5bde4eeaa7aa4f9875da4d9bd2fad39b0",
+      "submission_date": null
+    },
+    "state": {
+      "address": "0x849d52316331967b6ff1198e5e32a0eb168d039d",
+      "fallback_handler": null,
+      "guard": null,
+      "modules": [],
+      "nonce": "0xb33",
+      "owners": [
+        "0x964ae5ab627f1d536d5d5796734b7a44ad6531e3",
+        "0xed5ddb58f3131274597ee59c98a073ce3c5d1cb9",
+        "0x1b0c638616ed79db430edbf549ad9512ff4a8ed1",
+        "0x4e288c2abc77a4d7c5583cdc9792731220a088cf",
+        "0xbab04858c4ebbb226dd12b38639e59450820536f",
+        "0xe9eb7da58f6b5ce5b0a6cfd778a2fa726203aad5"
+      ],
+      "singleton": "0xd9db270c1b5e3bd161e8c8503c55ceabee709552",
+      "singleton_name": "Safe 1.3.0",
+      "threshold": 3,
+      "version": "1.3.0"
+    },
+    "tx": {
+      "base_gas": "0x0",
+      "data": "0x8d80ff0a00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000112000a7cb434f96f65972d46a5c1a64a9654dc9959b200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000024aa9224cd0000000000000000000000000000000000000000000000000000000000000000005afe3855358e112b5647b952709e6165e1c1eeee00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000044a9059cbb000000000000000000000000458cd345b4c05e8df39d0a07220feb4ec19f5e6f0000000000000000000000000000000000000000002042923c813833870000000000000000000000000000000000",
+      "gas_price": "0x0",
+      "gas_token": "0x0000000000000000000000000000000000000000",
+      "nonce": "0xb33",
+      "operation": 1,
+      "refund_receiver": "0x0000000000000000000000000000000000000000",
+      "safe_tx_gas": "0x0",
+      "to": "0x40a2accbd92bca938b02010e17a5b8929b49130d",
+      "value": "0x0"
+    }
+  }
+}

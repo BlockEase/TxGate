@@ -2,17 +2,19 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import logo from "./assets/logo.png";
-import { api, errorText, onEngineEvent, type Config, type EngineEvent, type RequestRecord, type ServerStatus, type Snapshot } from "./api";
+import { api, errorText, onEngineEvent, type Config, type EngineEvent, type RequestRecord, type SafeAlert, type ServerStatus, type Snapshot, type WatchStatus } from "./api";
 import { ApprovalDialog } from "./components/ApprovalDialog";
 import { About } from "./views/About";
 import { History } from "./views/History";
 import { Monitor } from "./views/Monitor";
 import { Networks } from "./views/Networks";
+import { Safe } from "./views/Safe";
 import { Settings } from "./views/Settings";
+import { I18nProvider, isLang, makeI18n, systemLang } from "./i18n";
 
-type View = "monitor" | "history" | "networks" | "settings" | "about";
+type View = "monitor" | "history" | "safe" | "networks" | "settings" | "about";
 
-const VIEWS: View[] = ["monitor", "history", "networks", "settings", "about"];
+const VIEWS: View[] = ["monitor", "history", "safe", "networks", "settings", "about"];
 const MONITOR_LIMIT = 1000;
 
 /** Updates or inserts `r` in a list kept newest-first by id. An update for a
@@ -40,6 +42,8 @@ export default function App() {
   const [recent, setRecent] = useState<RequestRecord[]>([]);
   const [pending, setPending] = useState<RequestRecord[]>([]);
   const [server, setServer] = useState<ServerStatus | null>(null);
+  const [safeWatch, setSafeWatch] = useState<WatchStatus[]>([]);
+  const [safeAlerts, setSafeAlerts] = useState<SafeAlert[]>([]);
   // The URL hash selects the initial view (handy for previews and screenshots).
   const [view, setView] = useState<View>(() => (VIEWS.find((v) => window.location.hash.startsWith(`#${v}`)) ?? "monitor"));
   const [selectedId, setSelectedId] = useState<number | null>(() => {
@@ -61,6 +65,16 @@ export default function App() {
     },
     [dismiss],
   );
+
+  // Language shown now; read through a ref by event handlers set up once.
+  const lang = isLang(snapshot?.config.language) ? snapshot.config.language : systemLang();
+  const i18n = makeI18n(lang);
+  const i18nRef = useRef(i18n);
+  i18nRef.current = i18n;
+  useEffect(() => {
+    document.documentElement.lang = lang;
+    api.setUiLanguage(lang).catch(() => {});
+  }, [lang]);
 
   const pendingLoaded = useRef(false);
 
@@ -88,13 +102,30 @@ export default function App() {
         case "server":
           setServer(e.payload);
           break;
+        case "safe_watch":
+          setSafeWatch(e.payload);
+          break;
+        case "safe_alert": {
+          const a = e.payload;
+          setSafeAlerts((prev) => [a, ...prev.filter((x) => x.id !== a.id)]);
+          if (a.severity !== "info") {
+            const { t, tt } = i18nRef.current;
+            toast(t("app.toast_safe_alert", { safe: `${a.safe.slice(0, 6)}…${a.safe.slice(-4)}`, message: tt(a.text, a.message) }), 15_000);
+          }
+          break;
+        }
+        case "history_cleared":
+          // Held transactions stay; everything else is gone from the live list too.
+          api.snapshot().then((s) => setRecent(s.recent), () => {});
+          setHistoryKey((k) => k + 1);
+          break;
         case "unroutable": {
           // Wallets poll every few seconds; say it once a minute per chain.
           const { chain_id, client, message } = e.payload;
           const last = unroutableAt.current.get(chain_id) ?? 0;
           if (Date.now() - last > 60_000) {
             unroutableAt.current.set(chain_id, Date.now());
-            toast(`A wallet at ${client} used chain ${chain_id}: ${message}. Fix it under Networks or Settings.`, 15_000);
+            toast(i18nRef.current.t("app.toast_unroutable", { client, chain: chain_id, message }), 15_000);
           }
           break;
         }
@@ -111,6 +142,8 @@ export default function App() {
         setRecent(s.recent);
         applyPending(s.pending);
         setServer(s.server);
+        setSafeWatch(s.safe_watch);
+        setSafeAlerts(s.safe_alerts);
         if (s.startup_warning) toast(s.startup_warning, 60_000);
       })
       .catch((e) => setLoadError(errorText(e)));
@@ -123,7 +156,7 @@ export default function App() {
   if (loadError) {
     return (
       <div className="empty" style={{ height: "100%", justifyContent: "center" }}>
-        <h4>TxGate could not start its interface</h4>
+        <h4>{i18n.t("app.load_error")}</h4>
         <span>{loadError}</span>
       </div>
     );
@@ -131,23 +164,27 @@ export default function App() {
   if (!snapshot) return null;
   const config = snapshot.config;
 
+  const unreadAlerts = safeAlerts.filter((a) => !a.read).length;
+  const { t } = i18n;
   const nav: { id: View; label: string; badge?: string }[] = [
-    { id: "monitor", label: "Requests", badge: pending.length ? `${pending.length} held` : undefined },
-    { id: "history", label: "History" },
-    { id: "networks", label: "Networks", badge: String(config.networks.length) },
-    { id: "settings", label: "Settings" },
-    { id: "about", label: "About & limits" },
+    { id: "monitor", label: t("nav.requests"), badge: pending.length ? t("nav.held", { count: pending.length }) : undefined },
+    { id: "history", label: t("nav.history") },
+    { id: "safe", label: t("nav.safe"), badge: unreadAlerts ? t("nav.new", { count: unreadAlerts }) : undefined },
+    { id: "networks", label: t("nav.networks"), badge: String(config.networks.length) },
+    { id: "settings", label: t("nav.settings") },
+    { id: "about", label: t("nav.about") },
   ];
 
   return (
+    <I18nProvider lang={lang}>
     <div className="app">
-      <nav className="sidebar" aria-label="Main">
+      <nav className="sidebar" aria-label={t("nav.main")}>
         <div className="brand">
           <img src={logo} width={24} height={24} alt="" /> TxGate
         </div>
         {nav.map((n, i) => (
           <div key={n.id} style={{ display: "contents" }}>
-            {i === 2 && <div className="nav-gap" />}
+            {i === 3 && <div className="nav-gap" />}
             <button
               className="nav-item"
               aria-current={view === n.id ? "page" : undefined}
@@ -164,17 +201,16 @@ export default function App() {
         <div className="sidebar-foot">
           <div className="row">
             <span className={`dot ${server?.listening ? "on" : "off"}`} />
-            <span>{server?.listening ? "Listening" : "Not listening"}</span>
+            <span>{server?.listening ? t("app.listening") : t("app.not_listening")}</span>
           </div>
           <span className="text-muted num" style={{ fontSize: 12, overflowWrap: "anywhere" }}>
-            {server?.address ?? `${config.listen.lan ? "0.0.0.0" : "127.0.0.1"}:${config.listen.port}`} · {config.networks.length}{" "}
-            {config.networks.length === 1 ? "network" : "networks"}
+            {server?.address ?? `${config.listen.lan ? "0.0.0.0" : "127.0.0.1"}:${config.listen.port}`} · {t(config.networks.length === 1 ? "app.network_count_one" : "app.network_count", { count: config.networks.length })}
           </span>
           {server?.error && (
             <>
               <span className="error-text">{server.error}</span>
               <button className="btn btn-secondary" onClick={() => api.restartListener().then(setServer)}>
-                Try again
+                {t("app.try_again")}
               </button>
             </>
           )}
@@ -184,6 +220,7 @@ export default function App() {
       <main className="main">
         {view === "monitor" && <Monitor recent={recent} config={config} selectedId={selectedId} onSelect={setSelectedId} />}
         {view === "history" && <History config={config} refreshKey={historyKey} />}
+        {view === "safe" && <Safe snapshot={snapshot} watch={safeWatch} alerts={safeAlerts} onConfig={setConfig} onAlerts={setSafeAlerts} />}
         {view === "networks" && <Networks snapshot={snapshot} onConfig={setConfig} />}
         {view === "settings" && <Settings snapshot={snapshot} onConfig={setConfig} onServer={setServer} />}
         {view === "about" && <About snapshot={snapshot} />}
@@ -192,12 +229,13 @@ export default function App() {
       {pending.length > 0 && !deferred && <ApprovalDialog pending={pending} config={config} onDefer={defer} onNotice={(text) => toast(text)} />}
 
       <div className="toasts" aria-live="polite">
-        {toasts.map((t) => (
-          <div className="toast" key={t.id} onClick={() => dismiss(t.id)} title="Click to dismiss">
-            {t.text}
+        {toasts.map((x) => (
+          <div className="toast" key={x.id} onClick={() => dismiss(x.id)} title={t("app.dismiss")}>
+            {x.text}
           </div>
         ))}
       </div>
     </div>
+    </I18nProvider>
   );
 }

@@ -4,7 +4,8 @@
 import { useState } from "react";
 import { AlertTriangle, Info, ShieldAlert } from "lucide-react";
 import { api, errorText, type PreviewMatch, type Risk, type SimulationOutcome, type TxView } from "../api";
-import { clock, shortAddr } from "../format";
+import { clock, shortAddr, toBig } from "../format";
+import { t, tt } from "../i18n";
 
 /** Static risks plus chain-state risks, most severe first. */
 export function allRisks(tx: TxView): Risk[] {
@@ -32,8 +33,8 @@ export function useSimulate(id: number) {
 
 /** Known token symbols by lower-case address, from chain-state enrichment. */
 export function tokenSymbols(tx: TxView): Record<string, string> {
-  const t = tx.enrichment?.token;
-  return t?.symbol ? { [t.address.toLowerCase()]: t.symbol } : {};
+  const tok = tx.enrichment?.token;
+  return tok?.symbol ? { [tok.address.toLowerCase()]: tok.symbol } : {};
 }
 
 export function RiskList({ risks, title }: { risks: Risk[]; title?: string }) {
@@ -42,14 +43,61 @@ export function RiskList({ risks, title }: { risks: Risk[]; title?: string }) {
   const body = risks.map((r, i) => (
     <div key={i} className={`risk ${r.severity}`}>
       {r.severity === "danger" ? <ShieldAlert size={14} /> : r.severity === "warning" ? <AlertTriangle size={14} /> : <Info size={14} />}
-      <span>{r.message}</span>
+      <span>{tt(r.text, r.message)}</span>
     </div>
   ));
   if (!serious) return <div className="section">{body}</div>;
   return (
     <div className="attention" role="alert">
-      <span className="attention-title">{title ?? "Needs attention"}</span>
+      <span className="attention-title">{title ?? t("risk.needs_attention")}</span>
       {body}
+    </div>
+  );
+}
+
+const same = (a: string | null | undefined, b: string | null | undefined) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
+
+/** EIP-7702 authorizations: which accounts hand their code to which contract. */
+export function Authorizations({ tx }: { tx: TxView }) {
+  const list = tx.authorizations;
+  if (list.length === 0) return null;
+  return (
+    <div className="section">
+      <h6>{list.length === 1 ? t("auth.title_one") : t("auth.title", { count: list.length })}</h6>
+      <span className="text-muted">{t("auth.explain")}</span>
+      {list.map((a, i) => {
+        const revokes = toBig(a.address) === 0n;
+        const anyChain = toBig(a.chain_id) === 0n;
+        const isSender = same(a.authority, tx.fields.from);
+        return (
+          <div className="safe-call" key={i}>
+            <div className="row" style={{ flexWrap: "wrap" }}>
+              <span className={revokes ? "tag tag-neutral" : "tag tag-outline"}>{revokes ? t("auth.removes") : t("auth.delegates")}</span>
+              {anyChain && <span className="tag tag-outline">{t("auth.any_chain")}</span>}
+            </div>
+            <div className="args num">
+              <span>{t("auth.account")}</span>
+              <span>
+                {a.authority ? <span className="mono">{a.authority}</span> : <span className="error-text">{t("auth.unknown")}</span>}
+                {isSender && <span className="text-muted"> · {t("auth.is_sender")}</span>}
+                {a.authority && !isSender && <span className="text-muted"> · {t("auth.not_sender")}</span>}
+              </span>
+              {!revokes && (
+                <>
+                  <span>{t("auth.delegate_to")}</span>
+                  <span className="mono">{a.address}</span>
+                </>
+              )}
+              <span>{t("auth.valid_on")}</span>
+              <span className={anyChain ? "error-text" : undefined}>
+                {anyChain ? t("auth.every_chain") : t("format.chain", { id: toBig(a.chain_id).toString() })}
+              </span>
+              <span>{t("panel.nonce")}</span>
+              <span>{a.nonce}</span>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -60,17 +108,22 @@ export function Params({ tx }: { tx: TxView }) {
   if (!call.selector) return null;
   return (
     <div className="section">
-      <h6>Call · {call.function ?? call.selector}</h6>
-      {call.signature ? <span className="fine mono">{call.signature}</span> : <span className="fine">Unrecognised function. Only the selector is known.</span>}
+      <h6>{t("call.title", { name: call.function ?? call.selector })}</h6>
+      {call.signature ? <span className="fine mono">{call.signature}</span> : <span className="fine">{t("call.unknown")}</span>}
       {call.args.length > 0 && (
         <div className="args num">
           {call.args.map((a) => (
-            <ArgRow key={a.name} name={a.name} value={formatted.get(a.name) ?? a.value} raw={a.value} />
+            <ArgRow key={a.name} name={a.name} value={localAmount(formatted.get(a.name) ?? a.value)} raw={a.value} />
           ))}
         </div>
       )}
     </div>
   );
+}
+
+/** The engine formats unlimited amounts as "Unlimited SYMBOL". */
+function localAmount(v: string): string {
+  return v === "Unlimited" || v.startsWith("Unlimited ") ? t("effects.unlimited") + v.slice("Unlimited".length) : v;
 }
 
 function ArgRow({ name, value, raw }: { name: string; value: string; raw: string }) {
@@ -98,10 +151,10 @@ export function Effects({
   return (
     <div className="section">
       <h6>
-        Effects after execution
+        {t("effects.title")}
         {outcome && onSimulate && (
           <button className="btn btn-ghost" style={{ marginLeft: "auto", fontSize: 12 }} onClick={onSimulate} disabled={busy}>
-            {busy ? "Simulating…" : "Simulate again"}
+            {busy ? t("effects.simulating") : t("effects.again")}
           </button>
         )}
       </h6>
@@ -110,20 +163,20 @@ export function Effects({
           {canSimulate ? (
             <>
               <span className="text-muted" style={{ flex: 1 }}>
-                {busy ? "Simulating with Tenderly…" : "Not simulated yet."}
+                {busy ? t("effects.simulating_tenderly") : t("effects.not_yet")}
               </span>
               {onSimulate && (
                 <button className="btn btn-secondary" onClick={onSimulate} disabled={busy}>
-                  Simulate
+                  {t("effects.simulate")}
                 </button>
               )}
             </>
           ) : (
-            <span className="text-muted">Add Tenderly credentials in Settings to see balance and approval changes here.</span>
+            <span className="text-muted">{t("effects.no_credentials")}</span>
           )}
         </div>
       )}
-      {outcome?.status === "error" && <span className="error-text">Simulation failed: {outcome.message}</span>}
+      {outcome?.status === "error" && <span className="error-text">{t("effects.failed", { error: outcome.message })}</span>}
       {outcome?.status === "ok" && <SimulationView outcome={outcome} symbols={tokenSymbols} />}
     </div>
   );
@@ -134,11 +187,11 @@ function SimulationView({ outcome, symbols }: { outcome: Extract<SimulationOutco
   const moves = r.asset_changes.filter((c) => c.direction !== "other");
   return (
     <>
-      {!r.success && <span className="error-text">Reverts: {r.error ?? "execution reverted"}. Nothing would change on-chain except the gas fee.</span>}
-      {r.success && moves.length === 0 && r.approvals.length === 0 && <span className="text-muted">No token or ETH balance changes for the sender.</span>}
+      {!r.success && <span className="error-text">{t("effects.reverts", { error: r.error ?? "execution reverted" })}</span>}
+      {r.success && moves.length === 0 && r.approvals.length === 0 && <span className="text-muted">{t("effects.no_changes")}</span>}
       {moves.map((c, i) => (
         <div className="effect" key={`m${i}`}>
-          <span className="kind">{c.direction === "out" ? "Lose" : "Receive"}</span>
+          <span className="kind">{c.direction === "out" ? t("effects.lose") : t("effects.receive")}</span>
           <span className="amt">{c.amount}</span>
           <span>{c.symbol}</span>
           <span className="note">{c.dollar_value ? `≈ $${Number(c.dollar_value).toLocaleString("en-US", { maximumFractionDigits: 2 })}` : ""}</span>
@@ -146,50 +199,50 @@ function SimulationView({ outcome, symbols }: { outcome: Extract<SimulationOutco
       ))}
       {r.approvals.map((a, i) => (
         <div className="effect" key={`a${i}`}>
-          <span className="kind">Approve</span>
+          <span className="kind">{t("effects.approve")}</span>
           <span className="amt">{approvalAmount(a.amount)}</span>
           <span title={a.token_address ?? ""}>{(a.token_address && symbols[a.token_address.toLowerCase()]) || shortAddr(a.token_address)}</span>
-          <span className="note">to {shortAddr(a.spender)}</span>
+          <span className="note">{t("effects.to", { address: shortAddr(a.spender) })}</span>
         </div>
       ))}
       <span className="fine">
-        Tenderly simulation{r.block_number ? ` at block ${r.block_number.toLocaleString("en-US")}` : ""} · {clock(outcome.ts_ms)}
-        {r.gas_used ? ` · ${r.gas_used.toLocaleString("en-US")} gas` : ""}
+        {r.block_number ? t("effects.footer_block", { block: r.block_number.toLocaleString("en-US") }) : t("effects.footer")} · {clock(outcome.ts_ms)}
+        {r.gas_used ? ` · ${t("effects.gas", { gas: r.gas_used.toLocaleString("en-US") })}` : ""}
       </span>
     </>
   );
 }
 
 function approvalAmount(raw: string): string {
-  if (raw === "all") return "All tokens";
+  if (raw === "all") return t("effects.all_tokens");
   try {
-    return BigInt(raw) >= 2n ** 159n ? "Unlimited" : BigInt(raw).toLocaleString("en-US");
+    return BigInt(raw) >= 2n ** 159n ? t("effects.unlimited") : BigInt(raw).toLocaleString("en-US");
   } catch {
     return raw;
   }
 }
 
+
 export function PreviewNote({ preview }: { preview: PreviewMatch | null }) {
   if (!preview) return null;
   if (preview.kind === "matched") {
-    return <span className="text-muted">Matches the eth_estimateGas preview from {clock(preview.at_ms)}.</span>;
+    return <span className="text-muted">{t("preview.matched", { time: clock(preview.at_ms) })}</span>;
   }
   if (preview.kind === "no_preview") {
-    return <span className="text-muted">The wallet did not preview this transaction with eth_estimateGas.</span>;
+    return <span className="text-muted">{t("preview.none")}</span>;
   }
   return (
     <div className="attention" role="alert">
-      <span className="attention-title">Signed transaction differs from the preview</span>
-      <span className="note-accent">
-        At {clock(preview.at_ms)} the wallet estimated a different transaction. The dApp front-end may have been tampered with.
-      </span>
+      <span className="attention-title">{t("preview.mismatch_title")}</span>
+      <span className="note-accent">{t("preview.mismatch_body", { time: clock(preview.at_ms) })}</span>
       {preview.diffs.map((d) => (
         <div className="diff" key={d.field}>
-          <span className="text-muted">{d.field}</span>
-          <span />
-          <span className="text-muted">preview</span>
+          <span className="text-muted" style={{ gridColumn: "1 / -1" }}>
+            {t(`preview.field.${d.field}`)}
+          </span>
+          <span className="text-muted">{t("preview.previewed")}</span>
           <span className="mono">{d.previewed}</span>
-          <span className="text-muted">signed</span>
+          <span className="text-muted">{t("preview.signed")}</span>
           <span className="mono">{d.signed}</span>
         </div>
       ))}

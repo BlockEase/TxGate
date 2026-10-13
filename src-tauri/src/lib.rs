@@ -16,7 +16,10 @@ use txgate_core::jsonrpc::SEND_METHODS;
 use txgate_core::providers::{Provider, KNOWN_CHAINS};
 use txgate_core::server::{self, ServerHandle};
 use txgate_core::simulate::SimulationOutcome;
+use txgate_core::decode::Severity;
 use txgate_core::record::{Decision, RequestRecord};
+use txgate_core::safe_state::SafeTxReport;
+use txgate_core::safe_watch::{SafeAlert, WatchStatus};
 use txgate_core::store::{HistoryQuery, Store};
 use txgate_core::upstream::HttpUpstream;
 
@@ -66,6 +69,8 @@ struct Snapshot {
     db_path: String,
     lan_addresses: Vec<String>,
     startup_warning: Option<String>,
+    safe_watch: Vec<WatchStatus>,
+    safe_alerts: Vec<SafeAlert>,
 }
 
 /// Best-effort list of this machine's LAN IPv4 addresses, shown when
@@ -99,7 +104,48 @@ fn get_snapshot(state: State<'_, AppState>) -> Snapshot {
         db_path: state.db_path.display().to_string(),
         lan_addresses: lan_addresses(),
         startup_warning: state.startup_warning.clone(),
+        safe_watch: engine.safe_watch(),
+        safe_alerts: engine.safe_alerts(200).unwrap_or_default(),
     }
+}
+
+/// Checks a SafeTx before the user signs it (typed data, service JSON or fields).
+#[tauri::command]
+async fn safe_review(state: State<'_, AppState>, chain_id: u64, safe: String, input: serde_json::Value) -> CmdResult<SafeTxReport> {
+    let safe = safe.trim().parse().map_err(|_| "Enter a valid Safe address".to_string())?;
+    state.engine.review_safe_tx(chain_id, safe, input).await
+}
+
+/// Queued transactions of any Safe, verified locally.
+#[tauri::command]
+async fn safe_queue(state: State<'_, AppState>, chain_id: u64, safe: String) -> CmdResult<Vec<SafeTxReport>> {
+    let safe = safe.trim().parse().map_err(|_| "Enter a valid Safe address".to_string())?;
+    state.engine.safe_queue(chain_id, safe).await
+}
+
+/// Checks the watched Safes now.
+#[tauri::command]
+async fn safe_poll(state: State<'_, AppState>) -> CmdResult<Vec<WatchStatus>> {
+    Ok(state.engine.poll_safes().await)
+}
+
+#[tauri::command]
+fn safe_alerts_read(state: State<'_, AppState>) -> CmdResult<Vec<SafeAlert>> {
+    state.engine.mark_safe_alerts_read().map_err(err)?;
+    state.engine.safe_alerts(200).map_err(err)
+}
+
+/// Polls the watched Safes forever, at the configured interval.
+fn watch_safes(engine: Engine) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            if !engine.config().safe.watched.is_empty() {
+                engine.poll_safes().await;
+            }
+            let secs = engine.config().safe.poll_secs.max(15);
+            tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+        }
+    });
 }
 
 #[tauri::command]
@@ -116,6 +162,12 @@ async fn simulate(state: State<'_, AppState>, id: u64) -> CmdResult<SimulationOu
 #[tauri::command]
 fn query_history(state: State<'_, AppState>, query: HistoryQuery) -> CmdResult<Vec<RequestRecord>> {
     state.engine.history(&query).map_err(err)
+}
+
+/// Deletes the request history, keeping transactions that still wait for a decision.
+#[tauri::command]
+fn clear_history(state: State<'_, AppState>) -> CmdResult<usize> {
+    state.engine.clear_history().map_err(err)
 }
 
 /// Saves the whole configuration. Restarts the listener when the address changed.
@@ -217,6 +269,33 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
+/// Language the UI is showing (it resolves "follow the system"); used for
+/// notifications and the tray menu.
+static UI_LANG: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+
+fn tr(key: &str, params: &[(&str, String)]) -> String {
+    let lang = UI_LANG.read().map(|l| l.clone()).unwrap_or_default();
+    txgate_core::text::tr(&lang, key, params)
+}
+
+/// Tray menu entries, relabelled when the language changes.
+struct TrayItems {
+    show: MenuItem<tauri::Wry>,
+    quit: MenuItem<tauri::Wry>,
+}
+
+/// Called by the UI on start-up and whenever the language changes.
+#[tauri::command]
+fn set_ui_language(app: AppHandle, language: String) {
+    if let Ok(mut l) = UI_LANG.write() {
+        *l = language;
+    }
+    if let Some(items) = app.try_state::<TrayItems>() {
+        let _ = items.show.set_text(tr("tray.show", &[]));
+        let _ = items.quit.set_text(tr("tray.quit", &[]));
+    }
+}
+
 /// Forwards engine events to the UI and raises attention for new held transactions.
 fn bridge_events(app: AppHandle, engine: Engine) {
     let mut rx = engine.subscribe();
@@ -240,12 +319,27 @@ fn bridge_events(app: AppHandle, engine: Engine) {
                     let _ = app
                         .notification()
                         .builder()
-                        .title("Transaction waiting for approval")
-                        .body(format!("Chain {} · {}", first.chain_id, first.summary))
+                        .title(tr("notify.held_title", &[]))
+                        .body(tr("notify.held_body", &[("chain", first.chain_id.to_string()), ("summary", first.summary.clone())]))
                         .show();
                     show_main_window(&app);
                 }
                 known_pending = list.iter().map(|r| r.id).collect();
+            }
+            match &event {
+                Event::SafeAlert(alert) if alert.severity >= Severity::Warning => {
+                    let _ = app
+                        .notification()
+                        .builder()
+                        .title(tr(if alert.severity == Severity::Danger { "notify.safe_alert" } else { "notify.safe_activity" }, &[]))
+                        .body(format!(
+                            "{} · {}",
+                            txgate_core::decode::short(&alert.safe),
+                            alert.text.as_ref().map(|t| t.localized(&UI_LANG.read().map(|l| l.clone()).unwrap_or_default())).unwrap_or_else(|| alert.message.clone())
+                        ))
+                        .show();
+                }
+                _ => {}
             }
             let _ = app.emit(EVENT_CHANNEL, &event);
         }
@@ -253,9 +347,10 @@ fn bridge_events(app: AppHandle, engine: Engine) {
 }
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "Show TxGate", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit TxGate", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", tr("tray.show", &[]), true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", tr("tray.quit", &[]), true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
+    app.manage(TrayItems { show: show.clone(), quit: quit.clone() });
     let mut builder = TrayIconBuilder::with_id("main")
         .tooltip("TxGate")
         .menu(&menu)
@@ -314,6 +409,7 @@ pub fn run() {
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
 
             bridge_events(app.handle().clone(), engine.clone());
+            watch_safes(engine.clone());
             app.manage(AppState { engine, server: Mutex::new(None), config_path, db_path, startup_warning, exit_warned_ms: Default::default() });
             setup_tray(app)?;
 
@@ -336,10 +432,16 @@ pub fn run() {
             decide,
             simulate,
             query_history,
+            clear_history,
+            set_ui_language,
             save_config,
             save_network,
             delete_network,
             restart_listener,
+            safe_review,
+            safe_queue,
+            safe_poll,
+            safe_alerts_read,
         ])
         .build(tauri::generate_context!())
         .expect("error while building TxGate")
@@ -358,8 +460,8 @@ pub fn run() {
                     let _ = app
                         .notification()
                         .builder()
-                        .title("Transactions are still held")
-                        .body(format!("Quitting discards {held} held transaction(s). Decide them first, or quit again within 10 seconds."))
+                        .title(tr("notify.quit_title", &[]))
+                        .body(tr("notify.quit_body", &[("count", held.to_string())]))
                         .show();
                 }
             }

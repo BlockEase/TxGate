@@ -28,6 +28,8 @@ use crate::enrich::enrich;
 use crate::jsonrpc::{error_response, rejected_response, send_payload, with_id, Call, Category, SendPayload};
 use crate::preview::PreviewBook;
 use crate::record::{Decision, RequestRecord, Status, TxDetail, TxView};
+use crate::safe_state::{review, SafeTxReport};
+use crate::safe_watch::{check_safe, SafeAlert, WatchStatus};
 use crate::simulate::{self, web_simulator_url, SimulationOutcome};
 use crate::store::{HistoryQuery, Store};
 use crate::upstream::{self, Upstream};
@@ -58,6 +60,12 @@ pub enum Event {
     /// its upstream cannot be resolved (e.g. a provider key is missing).
     Unroutable { chain_id: u64, client: String, message: String },
     Server(ServerStatus),
+    /// The latest status of every watched Safe.
+    SafeWatch(Vec<WatchStatus>),
+    /// Something changed on a watched Safe.
+    SafeAlert(SafeAlert),
+    /// The request history was cleared; only held transactions remain.
+    HistoryCleared,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -129,6 +137,9 @@ struct Inner {
     previews: Mutex<PreviewBook>,
     gate: Mutex<Gate>,
     server: Mutex<ServerStatus>,
+    safe_watch: Mutex<Vec<WatchStatus>>,
+    /// Serialises Safe polls so snapshots are never compared twice.
+    safe_poll: tokio::sync::Mutex<()>,
 }
 
 /// Cheap to clone handle to the shared engine state.
@@ -159,6 +170,8 @@ impl Engine {
             previews: Mutex::new(PreviewBook::new(window)),
             gate: Mutex::new(Gate::default()),
             server: Mutex::new(ServerStatus::default()),
+            safe_watch: Mutex::new(Vec::new()),
+            safe_poll: tokio::sync::Mutex::new(()),
         })))
     }
 
@@ -191,6 +204,8 @@ impl Engine {
         }
         self.0.previews.lock().set_window(next.preview_window_secs);
         *current = next.clone();
+        drop(current);
+        self.forget_unwatched_safes(&next);
         Ok(next)
     }
 
@@ -248,6 +263,19 @@ impl Engine {
 
     pub fn history(&self, q: &HistoryQuery) -> Result<Vec<RequestRecord>, EngineError> {
         Ok(self.0.store.query(q)?)
+    }
+
+    /// Forgets logged requests, in the history and the live monitor, except
+    /// transactions still waiting for a decision.
+    pub fn clear_history(&self) -> Result<usize, EngineError> {
+        // Holding the gate keeps a transaction that arrives meanwhile from being deleted.
+        let gate = self.0.gate.lock();
+        let held: Vec<u64> = gate.held.keys().copied().collect();
+        self.0.monitor.lock().retain(|r| held.contains(&r.id));
+        let removed = self.0.store.clear_requests(&held)?;
+        drop(gate);
+        self.emit(Event::HistoryCleared);
+        Ok(removed)
     }
 
     pub fn get(&self, id: u64) -> Result<RequestRecord, EngineError> {
@@ -430,12 +458,13 @@ impl Engine {
         let started = Instant::now();
         let mut record = self.base_record(ctx, &call);
         let fields = call.param(0).map(TxFields::from_request).unwrap_or_default();
-        let view = tx_view(ctx.chain_id, None, fields.clone(), &[]);
+        let auths = call.param(0).map(Authorization::list_from_request).unwrap_or_default();
+        let view = tx_view(ctx.chain_id, None, fields.clone(), &auths);
         record.summary = view.analysis.summary.clone();
         record.from = fields.from.map(|a| a.to_checksum(None));
         record.to = fields.to.map(|a| a.to_checksum(None));
         record.detail = Some(TxDetail { txs: vec![view.clone()], ..Default::default() });
-        self.0.previews.lock().record(record.id, record.ts_ms, ctx.chain_id, &fields);
+        self.0.previews.lock().record(record.id, record.ts_ms, ctx.chain_id, &fields, &auths);
 
         let (resp, status) = self.forward(&ctx.network.read_url, &call).await;
         record.status = status;
@@ -443,7 +472,7 @@ impl Engine {
         record.response = Some(clip(&resp));
         let id = record.id;
         self.put(record);
-        self.spawn_enrichment(id, ctx.network.read_url.clone(), vec![view], false);
+        self.spawn_enrichment(id, ctx.chain_id, ctx.network.read_url.clone(), vec![view], false);
         resp
     }
 
@@ -465,7 +494,7 @@ impl Engine {
 
         let (mut detail, dedupe_key) = describe_send(ctx.chain_id, &payload);
         if let Some(first) = detail.txs.first() {
-            detail.preview = Some(self.0.previews.lock().check(now_ms(), ctx.chain_id, &first.fields));
+            detail.preview = Some(self.0.previews.lock().check(now_ms(), ctx.chain_id, &first.fields, &first.authorizations));
             record.from = first.fields.from.map(|a| a.to_checksum(None));
             record.to = first.fields.to.map(|a| a.to_checksum(None));
             record.tx_hash = first.hash.clone();
@@ -529,7 +558,7 @@ impl Engine {
             (WaiterGuard { engine: self.clone(), held_id, waiter_id }, is_new)
         };
         if is_new {
-            self.spawn_enrichment(guard.held_id, ctx.network.read_url.clone(), detail.txs, true);
+            self.spawn_enrichment(guard.held_id, ctx.chain_id, ctx.network.read_url.clone(), detail.txs, true);
         }
 
         let resp = rx.await.unwrap_or_else(|_| error_response(call.id.clone(), -32603, "TxGate: request dropped"));
@@ -537,15 +566,16 @@ impl Engine {
         resp
     }
 
-    fn spawn_enrichment(&self, id: u64, read_url: String, views: Vec<TxView>, auto_simulate: bool) {
+    fn spawn_enrichment(&self, id: u64, chain_id: u64, read_url: String, views: Vec<TxView>, auto_simulate: bool) {
         if views.is_empty() {
             return;
         }
         let engine = self.clone();
         tokio::spawn(async move {
+            let safe_cfg = engine.0.config.read().safe.clone();
             let mut enrichments = Vec::new();
             for v in &views {
-                enrichments.push(enrich(engine.0.upstream.as_ref(), &read_url, &v.fields, &v.analysis).await);
+                enrichments.push(enrich(engine.0.upstream.as_ref(), &read_url, chain_id, &safe_cfg, &v.fields, &v.analysis).await);
             }
             engine.update_detail(id, |d| {
                 for (view, e) in d.txs.iter_mut().zip(enrichments) {
@@ -602,6 +632,109 @@ impl Engine {
             }
         });
         self.get(id)
+    }
+
+    // ------------------------------------------------------------------
+    // Safe multisig
+    // ------------------------------------------------------------------
+
+    /// Latest status of every watched Safe.
+    pub fn safe_watch(&self) -> Vec<WatchStatus> {
+        self.0.safe_watch.lock().clone()
+    }
+
+    /// Stored Safe alerts, newest first.
+    pub fn safe_alerts(&self, limit: u32) -> Result<Vec<SafeAlert>, EngineError> {
+        Ok(self.0.store.safe_alerts(limit)?)
+    }
+
+    pub fn mark_safe_alerts_read(&self) -> Result<(), EngineError> {
+        Ok(self.0.store.mark_safe_alerts_read()?)
+    }
+
+    /// Checks every watched Safe once: on-chain configuration against the last
+    /// snapshot, and the Transaction Service queue. New findings are stored and
+    /// emitted as alerts.
+    fn forget_unwatched_safes(&self, config: &Config) {
+        let watched: Vec<_> = config.safe.watched.iter().map(|w| (w.chain_id, w.address)).collect();
+        if let Err(e) = self.0.store.retain_safe_snapshots(&watched) {
+            tracing::error!("cannot prune Safe snapshots: {e}");
+        }
+    }
+
+    pub async fn poll_safes(&self) -> Vec<WatchStatus> {
+        let _running = self.0.safe_poll.lock().await;
+        let config = self.config();
+        let mut statuses = Vec::new();
+        for watched in &config.safe.watched {
+            let read_url = match config.resolve(watched.chain_id) {
+                Ok(n) => n.read_url,
+                Err(e) => {
+                    let mut status = WatchStatus::new(watched);
+                    status.set_error(crate::text::Text::new(
+                        "watch.chain_unreadable",
+                        [("chain", watched.chain_id.to_string()), ("error", e.to_string())],
+                    ));
+                    statuses.push(status);
+                    continue;
+                }
+            };
+            let prev = match self.0.store.safe_snapshot(watched.chain_id, &watched.address) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!("cannot read Safe snapshot: {e}");
+                    None
+                }
+            };
+            let outcome = check_safe(self.0.upstream.as_ref(), &read_url, &config.safe, watched, prev).await;
+            if let Some((state, seen)) = &outcome.snapshot
+                && let Err(e) = self.0.store.save_safe_snapshot(watched.chain_id, state, seen, now_ms())
+            {
+                tracing::error!("cannot store Safe snapshot: {e}");
+            }
+            for f in &outcome.findings {
+                match self.0.store.add_safe_alert(now_ms(), watched.chain_id, &watched.address, f) {
+                    Ok(alert) => self.emit(Event::SafeAlert(alert)),
+                    Err(e) => tracing::error!("cannot store Safe alert: {e}"),
+                }
+            }
+            statuses.push(outcome.status);
+        }
+        // A Safe removed while this poll ran must not keep the snapshot just saved.
+        self.forget_unwatched_safes(&self.config());
+        *self.0.safe_watch.lock() = statuses.clone();
+        self.emit(Event::SafeWatch(statuses.clone()));
+        statuses
+    }
+
+    /// Reviews a SafeTx before signing (typed data, Transaction Service JSON or
+    /// plain fields), reading the Safe from the network's read upstream.
+    pub async fn review_safe_tx(&self, chain_id: u64, safe: alloy_primitives::Address, input: Value) -> Result<SafeTxReport, String> {
+        let read_url = self.0.config.read().resolve(chain_id).map_err(|e| e.to_string())?.read_url;
+        review(self.0.upstream.as_ref(), &read_url, chain_id, safe, &input).await
+    }
+
+    /// Queued transactions of a Safe from the Transaction Service, verified locally.
+    pub async fn safe_queue(&self, chain_id: u64, safe: alloy_primitives::Address) -> Result<Vec<SafeTxReport>, String> {
+        let config = self.config();
+        let read_url = config.resolve(chain_id).map_err(|e| e.to_string())?.read_url;
+        let up = self.0.upstream.as_ref();
+        let state = crate::safe_state::read_state(up, &read_url, safe).await?;
+        let list = crate::safe_service::queued(up, &config.safe, chain_id, safe, state.nonce).await.map_err(|e| e.to_string())?;
+        let mut out = Vec::new();
+        for stx in &list {
+            let mut report = crate::safe_state::review_service_tx(up, &read_url, chain_id, stx, Some(state.clone())).await;
+            if stx.safe != safe {
+                report.risks.push(crate::decode::Risk::t(
+                    crate::decode::Severity::Danger,
+                    "safe_domain_mismatch",
+                    "safe_service_other_safe",
+                    [("other", stx.safe.to_checksum(None)), ("safe", safe.to_checksum(None))],
+                ));
+            }
+            out.push(report);
+        }
+        Ok(out)
     }
 
     // ------------------------------------------------------------------
@@ -681,7 +814,7 @@ fn describe_send(chain_id: u64, payload: &SendPayload) -> (TxDetail, String) {
             if hashes.len() == 1 { hashes.remove(0) } else { format!("bundle:{}", hashes.join(",")) }
         }
         SendPayload::Unsigned(obj) => {
-            detail.txs.push(tx_view(chain_id, None, TxFields::from_request(obj), &[]));
+            detail.txs.push(tx_view(chain_id, None, TxFields::from_request(obj), &Authorization::list_from_request(obj)));
             format!("unsigned:{chain_id}:{}", keccak256(obj.to_string().as_bytes()))
         }
     };

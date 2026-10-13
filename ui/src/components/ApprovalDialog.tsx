@@ -6,7 +6,9 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { api, errorText, type Config, type RequestRecord } from "../api";
 import { elapsed, eth, gwei, networkName, shortAddr, tenderlyReady } from "../format";
-import { allRisks, Effects, Params, PreviewNote, RiskList, tokenSymbols, useSimulate } from "./TxParts";
+import { SafeSection } from "./SafeParts";
+import { allRisks, Authorizations, Effects, Params, PreviewNote, RiskList, tokenSymbols, useSimulate } from "./TxParts";
+import { t } from "../i18n";
 
 /** Held transactions in the order they should be decided: per sender by nonce. */
 export function orderQueue(pending: RequestRecord[]): RequestRecord[] {
@@ -63,8 +65,8 @@ export function ApprovalDialog({
   }, [currentId]);
 
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -85,7 +87,7 @@ export function ApprovalDialog({
     risks.unshift({
       severity: "danger",
       code: "undecodable",
-      message: `TxGate could not decode this transaction: ${detail.decode_error}`,
+      message: t("dialog.undecodable", { error: detail.decode_error }),
     });
   }
 
@@ -96,9 +98,9 @@ export function ApprovalDialog({
       const result = await api.decide(current.id, approve);
       setIndex(0);
       if (result.status === "broadcast_failed") {
-        onNotice(`Broadcast failed: ${upstreamError(result.response)}. The wallet received the same error.`);
+        onNotice(t("dialog.broadcast_failed", { error: upstreamError(result.response) }));
       } else if (result.status === "approved" && result.tx_hash) {
-        onNotice(`Approved and broadcast ${result.tx_hash.slice(0, 10)}…`);
+        onNotice(t("dialog.approved", { hash: `${result.tx_hash.slice(0, 10)}…` }));
       }
     } catch (e) {
       setError(errorText(e));
@@ -112,28 +114,28 @@ export function ApprovalDialog({
       <div className="dialog approval">
         <div className="approval-head">
           <div className="dialog-title" id="approval-title">
-            {current.method === "eth_sendBundle" ? "Bundle held for approval" : "Transaction held for approval"}
+            {current.method === "eth_sendBundle" ? t("dialog.title_bundle") : t("dialog.title")}
           </div>
-          <span className="num note-accent">{disconnected ? "Wallet stopped waiting" : `Wallet waiting ${elapsed(current.ts_ms, now)}`}</span>
+          <span className="num note-accent">{disconnected ? t("dialog.wallet_left") : t("dialog.wallet_waiting", { time: elapsed(current.ts_ms, now) })}</span>
         </div>
         {queue.length > 1 && (
           <div className="queue-nav">
             <button
               className="btn btn-ghost btn-icon"
               style={{ width: 28, height: 28 }}
-              aria-label="Previous"
+              aria-label={t("dialog.previous")}
               disabled={pos === 0}
               onClick={() => setIndex(pos - 1)}
             >
               <ChevronLeft size={16} />
             </button>
             <span className="num">
-              {pos + 1} of {queue.length} held
+              {t("dialog.position", { n: pos + 1, total: queue.length })}
             </span>
             <button
               className="btn btn-ghost btn-icon"
               style={{ width: 28, height: 28 }}
-              aria-label="Next"
+              aria-label={t("dialog.next")}
               disabled={pos >= queue.length - 1}
               onClick={() => setIndex(pos + 1)}
             >
@@ -142,8 +144,8 @@ export function ApprovalDialog({
           </div>
         )}
         <span className="text-muted">
-          {current.method} from {current.client}. Nothing is sent to any upstream until you approve.
-          {detail && detail.attempts > 1 ? ` The wallet has submitted it ${detail.attempts} times.` : ""}
+          {t("dialog.intro", { method: current.method, client: current.client })}
+          {detail && detail.attempts > 1 ? ` ${t("dialog.attempts", { count: detail.attempts })}` : ""}
         </span>
 
         {tx && (
@@ -154,26 +156,26 @@ export function ApprovalDialog({
               paddingTop: 12,
             }}
           >
-            <span>Network</span>
+            <span>{t("table.network")}</span>
             <span>
               {networkName(config, current.chain_id)} · {current.chain_id}
             </span>
-            <span>Nonce</span>
+            <span>{t("panel.nonce")}</span>
             <span>{tx.fields.nonce ?? "—"}</span>
-            <span>Signer</span>
+            <span>{t("dialog.signer")}</span>
             <span title={tx.fields.from ?? ""}>{shortAddr(tx.fields.from)}</span>
-            <span>Max fee</span>
+            <span>{t("panel.max_fee")}</span>
             <span>{gwei(tx.max_fee_per_gas)}</span>
-            <span>Calls</span>
+            <span>{t("dialog.calls")}</span>
             <span className="span3" title={tx.fields.to ?? ""}>
-              {tx.fields.to ? tx.fields.to : "Deploys a new contract"}
+              {tx.fields.to ? tx.fields.to : t("risk.contract_creation")}
               {tx.analysis.call.function ? ` · ${tx.analysis.call.function}` : tx.analysis.call.selector ? ` · ${tx.analysis.call.selector}` : ""}
             </span>
-            <span>Sends</span>
+            <span>{t("dialog.sends")}</span>
             <span className="span3">{eth(tx.fields.value)}</span>
             {tx.tx_type && (
               <>
-                <span>Type</span>
+                <span>{t("panel.type")}</span>
                 <span className="span3">{tx.tx_type}</span>
               </>
             )}
@@ -182,12 +184,12 @@ export function ApprovalDialog({
 
         {blockedBy !== null && (
           <RiskList
-            title="Approve in nonce order"
+            title={t("dialog.nonce_order_title")}
             risks={[
               {
                 severity: "warning",
                 code: "nonce_order",
-                message: `Nonce ${blockedBy} from the same account is also held. Decide it first, or this transaction will wait in the mempool.`,
+                message: t("dialog.nonce_order", { nonce: blockedBy }),
               },
             ]}
           />
@@ -203,38 +205,40 @@ export function ApprovalDialog({
             tokenSymbols={tokenSymbols(tx)}
           />
         )}
+        {tx && <Authorizations tx={tx} />}
+        {tx && <SafeSection tx={tx} />}
         {tx && <Params tx={tx} />}
         {detail && detail.txs.length > 1 && (
           <span className="note-accent">
-            This bundle has {detail.txs.length} transactions. Only the first is shown in detail; approving broadcasts all of them.
+            {t("dialog.bundle", { count: detail.txs.length })}
           </span>
         )}
         {disconnected && (
           <div className="note-accent">
-            The wallet stopped waiting and may show this transaction as failed. The signed transaction is still held here: approving broadcasts it as usual,
-            discarding means it is never sent.
+            {t("dialog.disconnected")}
           </div>
         )}
         <div className="approval-foot">
           {(error ?? sim.error) && <span className="error-text">{error ?? sim.error}</span>}
           <label className="check">
             <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} />
-            <span className="box" />I have checked the details above and I started this transaction
+            <span className="box" />
+            {t("dialog.ack")}
           </label>
           <div className="dialog-actions" style={{ marginTop: 0, alignItems: "center" }}>
             {tx && (
               <button className="btn btn-ghost" style={{ marginRight: "auto" }} onClick={() => openUrl(tx.simulator_url)}>
-                Simulate in Tenderly
+                {t("common.simulate_tenderly")}
               </button>
             )}
             <button className="btn btn-ghost" onClick={onDefer} style={tx ? undefined : { marginRight: "auto" }}>
-              Review later
+              {t("dialog.later")}
             </button>
             <button className="btn btn-secondary" onClick={() => decide(false)} disabled={busy !== null}>
-              {busy === "reject" ? "Rejecting…" : disconnected ? "Discard transaction" : "Reject"}
+              {busy === "reject" ? t("dialog.rejecting") : disconnected ? t("dialog.discard") : t("dialog.reject")}
             </button>
             <button className="btn btn-primary" onClick={() => decide(true)} disabled={!ack || busy !== null}>
-              {busy === "approve" ? "Broadcasting…" : "Approve and broadcast"}
+              {busy === "approve" ? t("dialog.broadcasting") : t("dialog.approve")}
             </button>
           </div>
         </div>
@@ -246,5 +250,5 @@ export function ApprovalDialog({
 /** The upstream's error message from a JSON-RPC error response. */
 function upstreamError(response: unknown): string {
   const err = (response as { error?: { message?: string } } | null)?.error;
-  return err?.message ?? "the upstream did not accept the transaction";
+  return err?.message ?? t("dialog.not_accepted");
 }

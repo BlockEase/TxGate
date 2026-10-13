@@ -4,8 +4,10 @@
 import { Fragment, useState, type ReactNode } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Config, RequestRecord } from "../api";
-import { clock, copyText, dateTime, eth, gwei, networkName, shortAddr, STATUS_LABEL, STATUS_TAG, tenderlyReady } from "../format";
-import { allRisks, Effects, Params, PreviewNote, RiskList, tokenSymbols, useSimulate } from "./TxParts";
+import { clock, copyText, dateTime, eth, gwei, networkName, shortAddr, statusLabel, STATUS_TAG, tenderlyReady } from "../format";
+import { SafeSection } from "./SafeParts";
+import { allRisks, Authorizations, Effects, Params, PreviewNote, RiskList, tokenSymbols, useSimulate } from "./TxParts";
+import { t } from "../i18n";
 
 /** Label/value rows; rows whose value is null are left out. */
 export function Facts({ rows, className = "kv" }: { rows: [string, ReactNode][]; className?: string }) {
@@ -40,11 +42,11 @@ export function RecordPanel({
   const tx = detail?.txs[0];
   const call = tx?.analysis.call;
 
-  const title = tx ? `${tx.fields.to ? shortAddr(tx.fields.to) : "New contract"} · ${call?.function ?? call?.selector ?? "transfer"}` : record.method;
+  const title = tx ? `${tx.fields.to ? shortAddr(tx.fields.to) : t("panel.new_contract")} · ${call?.function ?? call?.selector ?? t("panel.transfer")}` : record.method;
   const json = (v: unknown) => JSON.stringify(v, null, 2);
 
   return (
-    <aside className="aside" aria-label="Request details">
+    <aside className="aside" aria-label={t("panel.label")}>
       <div className="aside-head">
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="card-kicker num">
@@ -53,37 +55,39 @@ export function RecordPanel({
           <h3>{title}</h3>
         </div>
         <button className="btn btn-ghost" onClick={onClose}>
-          Close
+          {t("common.close")}
         </button>
       </div>
       <div>
-        <span className={STATUS_TAG[record.status]}>{STATUS_LABEL[record.status]}</span>
+        <span className={STATUS_TAG[record.status]}>{statusLabel(record.status)}</span>
       </div>
 
       {tx && (
         <>
           <Facts
             rows={[
-              ["Contract", tx.fields.to ?? "— (deploys a contract)"],
-              ["From", tx.fields.from ?? "—"],
-              ["Value", eth(tx.fields.value)],
-              ["Nonce", tx.fields.nonce],
-              ["Gas limit", tx.fields.gas_limit?.toLocaleString("en-US")],
-              ["Max fee", tx.max_fee_per_gas && gwei(tx.max_fee_per_gas)],
-              ["Type", tx.tx_type],
-              ["Tx hash", tx.hash && <span className="mono">{tx.hash}</span>],
+              [t("panel.contract"), tx.fields.to ?? t("panel.deploys")],
+              [t("panel.from"), tx.fields.from ?? "—"],
+              [t("panel.value"), eth(tx.fields.value)],
+              [t("panel.nonce"), tx.fields.nonce],
+              [t("panel.gas_limit"), tx.fields.gas_limit?.toLocaleString("en-US")],
+              [t("panel.max_fee"), tx.max_fee_per_gas && gwei(tx.max_fee_per_gas)],
+              [t("panel.type"), tx.tx_type],
+              [t("panel.tx_hash"), tx.hash && <span className="mono">{tx.hash}</span>],
             ]}
           />
           {record.category === "send" && <PreviewNote preview={detail?.preview ?? null} />}
+          <Authorizations tx={tx} />
+          <SafeSection tx={tx} />
           <Params tx={tx} />
           <Effects outcome={detail?.simulation ?? null} onSimulate={simulate} busy={busy} canSimulate={tenderlyReady(config)} tokenSymbols={tokenSymbols(tx)} />
           {error && <span className="error-text">{error}</span>}
           <RiskList risks={allRisks(tx)} />
-          {!tx.enrichment && <span className="fine">Checking addresses and nonce with the read upstream…</span>}
-          {detail && detail.txs.length > 1 && <span className="text-muted">This bundle contains {detail.txs.length} transactions; the first one is shown.</span>}
+          {!tx.enrichment && <span className="fine">{t("panel.checking")}</span>}
+          {detail && detail.txs.length > 1 && <span className="text-muted">{t("panel.bundle", { count: detail.txs.length })}</span>}
           <div className="actions">
             <button className="btn btn-primary" onClick={() => openUrl(tx.simulator_url)}>
-              Simulate in Tenderly
+              {t("common.simulate_tenderly")}
             </button>
             {tx.fields.input !== "0x" && (
               <button
@@ -94,27 +98,27 @@ export function RecordPanel({
                   setTimeout(() => setCopied(false), 1500);
                 }}
               >
-                {copied ? "Copied" : "Copy calldata"}
+                {copied ? t("common.copied") : t("panel.copy_calldata")}
               </button>
             )}
           </div>
         </>
       )}
-      {detail?.decode_error && <span className="error-text">Could not decode: {detail.decode_error}</span>}
+      {detail?.decode_error && <span className="error-text">{t("panel.decode_error", { error: detail.decode_error })}</span>}
 
       <Facts
         rows={[
-          ["Client", record.client],
-          ["Duration", record.duration_ms === null ? "—" : `${record.duration_ms.toLocaleString("en-US")} ms`],
+          [t("panel.client"), record.client],
+          [t("panel.duration"), record.duration_ms === null ? "—" : `${record.duration_ms.toLocaleString("en-US")} ms`],
         ]}
       />
       <div className="section">
-        <h6>Request</h6>
+        <h6>{t("panel.request")}</h6>
         <pre className="code-block">{json(record.request)}</pre>
       </div>
       <div className="section">
-        <h6>Response</h6>
-        <pre className="code-block">{record.response ? json(record.response) : "Waiting…"}</pre>
+        <h6>{t("panel.response")}</h6>
+        <pre className="code-block">{record.response ? json(record.response) : t("panel.waiting")}</pre>
       </div>
     </aside>
   );

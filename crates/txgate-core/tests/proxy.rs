@@ -410,6 +410,10 @@ async fn http_server_refuses_websites_but_serves_wallet_extensions() {
 
     let refused = post("https://some-site.example").await.unwrap();
     assert_eq!(refused.status(), 403);
+    // Any website can send `Origin: null` from a sandboxed iframe or a data: URL.
+    let sandboxed = post("null").await.unwrap();
+    assert_eq!(sandboxed.status(), 403);
+    assert!(sandboxed.headers().get("access-control-allow-origin").is_none());
     assert!(up.calls_to("eth_blockNumber").is_empty());
 
     let ok: Value = post("chrome-extension://abcdef").await.unwrap().json().await.unwrap();
@@ -527,4 +531,100 @@ async fn the_monitor_stays_in_order_when_an_old_held_transaction_is_decided() {
 
 fn hex_bytes(s: &str) -> Vec<u8> {
     hex::decode(s.trim_start_matches("0x")).unwrap()
+}
+
+#[tokio::test]
+async fn clearing_history_forgets_logged_requests() {
+    let (engine, _) = setup();
+    let mut c = engine.config();
+    c.logging.mode = LogMode::All;
+    engine.set_config(c).unwrap();
+    engine.handle("1", "x".into(), json!({"id":1,"method":"eth_blockNumber"})).await;
+    engine.handle("1", "x".into(), json!({"id":2,"method":"eth_estimateGas","params":[{"to": TX_TO, "data": TX_DATA}]})).await;
+    assert_eq!(engine.history(&HistoryQuery::default()).unwrap().len(), 2);
+
+    let mut events = engine.subscribe();
+    engine.clear_history().unwrap();
+    assert!(engine.history(&HistoryQuery::default()).unwrap().is_empty());
+    assert!(engine.recent().is_empty());
+    assert!(matches!(events.recv().await.unwrap(), Event::HistoryCleared), "open windows must drop their rows");
+}
+
+#[tokio::test]
+async fn clearing_history_keeps_transactions_awaiting_approval() {
+    let (engine, up) = setup();
+    engine.handle("1", "x".into(), json!({"id":2,"method":"eth_estimateGas","params":[{"to": TX_TO, "data": TX_DATA}]})).await;
+    let e = engine.clone();
+    let wallet = tokio::spawn(async move { e.handle("1", "w".into(), send_raw(9)).await });
+    let id = wait_pending(&engine, 1).await[0].id;
+
+    engine.clear_history().unwrap();
+    let ids = |list: Vec<RequestRecord>| list.into_iter().map(|r| r.id).collect::<Vec<_>>();
+    assert_eq!(ids(engine.history(&HistoryQuery::default()).unwrap()), vec![id]);
+    assert_eq!(ids(engine.recent()), vec![id]);
+
+    engine.decide(id, Decision::Approved).await.unwrap();
+    assert_eq!(wallet.await.unwrap()["result"], "0xhash-from-upstream");
+    assert_eq!(up.calls_to("eth_sendRawTransaction").len(), 1);
+    assert_eq!(engine.history(&HistoryQuery::default()).unwrap()[0].status, Status::Approved);
+}
+
+/// A real signed EIP-7702 authorization from mainnet transaction 0x5b7e…ff4b:
+/// account 0x4de2…b2f3 delegates itself to 0x84D0…1F40 on chain 1.
+fn real_authorization() -> Value {
+    json!({
+        "chainId": "0x1",
+        "address": "0x84d05511614272694d3a9cebe896514dbde51f40",
+        "nonce": "0x88f7c",
+        "yParity": "0x0",
+        "r": "0xaf50c48c66c88749099fbf3fed6544ad65ec66618dd4ea541c27c06d341188c6",
+        "s": "0x53bb777b8ec16da28e5baaf9a1eee3b16461a02410972611771bb12588cad911"
+    })
+}
+
+#[tokio::test]
+async fn delegations_in_unsigned_requests_are_flagged() {
+    let (engine, up) = setup();
+    up.on("eth_sendTransaction", json!("0xok"));
+    let tx = json!({"from": "0x333333320bb4a0345a7a102c49c72b37647aa088", "to": TX_TO, "authorizationList": [real_authorization()]});
+
+    // The gas estimate before signing already shows the delegation...
+    engine.handle("1", "w".into(), json!({"id":1,"method":"eth_estimateGas","params":[tx.clone()]})).await;
+    let estimate = detail(&engine.recent()[0]).txs.remove(0);
+    assert!(estimate.analysis.risks.iter().any(|r| r.code == "eip7702_delegation"), "{:?}", estimate.analysis.risks);
+
+    // ...and so does the held transaction.
+    let e = engine.clone();
+    let send = json!({"jsonrpc":"2.0","id":2,"method":"eth_sendTransaction","params":[tx]});
+    let wallet = tokio::spawn(async move { e.handle("1", "w".into(), send).await });
+    let held = wait_pending(&engine, 1).await.remove(0);
+    let view = detail(&held).txs.remove(0);
+    assert_eq!(view.authorizations.len(), 1);
+    let auth = &view.authorizations[0];
+    assert_eq!(auth.authority.map(|a| a.to_string().to_lowercase()).as_deref(), Some("0x4de23f3f0fb3318287378adbde030cf61714b2f3"));
+    assert_eq!(auth.nonce, 561020);
+    assert!(view.analysis.risks.iter().any(|r| r.code == "eip7702_delegation"), "{:?}", view.analysis.risks);
+    engine.decide(held.id, Decision::Rejected).await.unwrap();
+    wallet.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_delegation_added_after_the_estimate_is_a_mismatch() {
+    let (engine, up) = setup();
+    up.on("eth_sendTransaction", json!("0xok"));
+    let from = "0x333333320bb4a0345a7a102c49c72b37647aa088";
+    let estimated = json!({"from": from, "to": TX_TO, "data": TX_DATA});
+    engine.handle("1", "w".into(), json!({"id":1,"method":"eth_estimateGas","params":[estimated]})).await;
+
+    let mut signed = json!({"from": from, "to": TX_TO, "data": TX_DATA});
+    signed["authorizationList"] = json!([real_authorization()]);
+    let e = engine.clone();
+    let send = json!({"jsonrpc":"2.0","id":2,"method":"eth_sendTransaction","params":[signed]});
+    let wallet = tokio::spawn(async move { e.handle("1", "w".into(), send).await });
+    let held = wait_pending(&engine, 1).await.remove(0);
+    let Some(PreviewMatch::Mismatch { diffs, .. }) = detail(&held).preview else { panic!("expected a mismatch, got {:?}", detail(&held).preview) };
+    assert_eq!(diffs.iter().map(|d| d.field.as_str()).collect::<Vec<_>>(), ["authorizations"]);
+    assert!(diffs[0].signed.contains("0x84D05511614272694D3a9cebE896514DBDE51F40"), "{:?}", diffs[0]);
+    engine.decide(held.id, Decision::Rejected).await.unwrap();
+    wallet.await.unwrap();
 }

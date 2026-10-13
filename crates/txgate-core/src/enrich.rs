@@ -4,7 +4,12 @@ use alloy_primitives::{Address, U256};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::config::SafeConfig;
 use crate::decode::{format_units, is_unlimited_amount, short, Analysis, Risk, Severity, TxFields};
+use crate::safe::approve_hash_arg;
+use crate::safe_service;
+use crate::safe_state::{check_exec, review_service_tx, SafeCheck, SafeTxReport};
+use crate::text::Text;
 use crate::upstream::{rpc_result, Upstream};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +30,13 @@ pub struct Enrichment {
     pub account_nonce: Option<u64>,
     /// Whether `to` has contract code.
     pub to_is_contract: Option<bool>,
+    /// `execTransaction`: the Safe's state, the hash at its nonce and the verified signatures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub safe: Option<SafeCheck>,
+    /// `approveHash`: the transaction the approved hash stands for, from the
+    /// Safe Transaction Service, re-hashed and decoded locally.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub safe_approval: Option<SafeTxReport>,
 }
 
 const TOKEN_FUNCTIONS: &[&str] = &["approve", "increaseAllowance", "transfer", "transferFrom", "permit"];
@@ -97,19 +109,46 @@ pub fn display_amount(raw: &str, token: &TokenInfo) -> String {
     }
 }
 
+/// Looks up what an `approveHash` approves.
+async fn safe_approval(up: &dyn Upstream, read_url: &str, chain_id: u64, cfg: &SafeConfig, safe: alloy_primitives::Address, hash: alloy_primitives::B256) -> Result<SafeTxReport, String> {
+    if !cfg.service_enabled {
+        return Err("the Safe Transaction Service is turned off in Settings".into());
+    }
+    let stx = safe_service::by_hash(up, cfg, chain_id, hash).await.map_err(|e| e.to_string())?;
+    if stx.safe != safe {
+        return Err(format!("the service has this hash for another Safe ({})", stx.safe.to_checksum(None)));
+    }
+    let report = review_service_tx(up, read_url, chain_id, &stx, None).await;
+    if report.hashes.safe_tx_hash != hash {
+        return Err("the transaction the service returned does not hash to the approved hash".into());
+    }
+    Ok(report)
+}
+
 /// Runs all state-dependent checks for one transaction.
-pub async fn enrich(up: &dyn Upstream, read_url: &str, tx: &TxFields, analysis: &Analysis) -> Enrichment {
+pub async fn enrich(up: &dyn Upstream, read_url: &str, chain_id: u64, safe_cfg: &SafeConfig, tx: &TxFields, analysis: &Analysis) -> Enrichment {
     let mut out = Enrichment::default();
+
+    if let Some(exec) = &analysis.safe {
+        let check = check_exec(up, read_url, chain_id, exec, tx.from).await;
+        out.risks.extend(check.risks.iter().cloned());
+        out.safe = Some(check);
+    }
+    if let (Some(to), Some(hash)) = (tx.to, approve_hash_arg(&tx.input)) {
+        match safe_approval(up, read_url, chain_id, safe_cfg, to, hash).await {
+            Ok(report) => {
+                out.risks.extend(report.risks.iter().map(|r| r.clone().prefixed(Text::plain("prefix.approved_transaction"))));
+                out.safe_approval = Some(report);
+            }
+            Err(e) => out.risks.push(Risk::t(Severity::Danger, "safe_approve_hash_unknown", "safe_approve_hash_unknown", [("error", e)])),
+        }
+    }
     let func = analysis.call.function.as_deref().unwrap_or_default();
 
     if let Some(to) = &tx.to {
         out.to_is_contract = has_code(up, read_url, to).await;
         if out.to_is_contract == Some(false) && !tx.input.is_empty() {
-            out.risks.push(Risk {
-                severity: Severity::Warning,
-                code: "call_to_eoa".into(),
-                message: format!("{} has no contract code, yet the transaction carries call data", short(to)),
-            });
+            out.risks.push(Risk::t(Severity::Warning, "call_to_eoa", "call_to_eoa", [("address", short(to))]));
         }
 
         let is_permit2 = analysis.call.signature.as_deref() == Some("approve(address,address,uint160,uint48)");
@@ -132,11 +171,7 @@ pub async fn enrich(up: &dyn Upstream, read_url: &str, tx: &TxFields, analysis: 
     };
     if let Some(addr) = grantee.and_then(|a| a.parse::<Address>().ok())
         && has_code(up, read_url, &addr).await == Some(false) {
-            out.risks.push(Risk {
-                severity: Severity::Danger,
-                code: "grantee_is_eoa".into(),
-                message: format!("Approval goes to {} — a plain account (EOA) with no contract code", short(&addr)),
-            });
+            out.risks.push(Risk::t(Severity::Danger, "grantee_is_eoa", "grantee_is_eoa", [("address", short(&addr))]));
         }
 
     if let (Some(from), Some(nonce)) = (tx.from, tx.nonce) {
@@ -147,20 +182,14 @@ pub async fn enrich(up: &dyn Upstream, read_url: &str, tx: &TxFields, analysis: 
         out.account_nonce = next;
         if let Some(next) = next {
             if nonce > next {
-                out.risks.push(Risk {
-                    severity: Severity::Warning,
-                    code: "nonce_gap".into(),
-                    message: format!(
-                        "Nonce {nonce} is ahead of the account's next nonce {next}: this transaction will wait in the mempool until nonces {next}–{} are used",
-                        nonce - 1
-                    ),
-                });
+                out.risks.push(Risk::t(
+                    Severity::Warning,
+                    "nonce_gap",
+                    "nonce_gap",
+                    [("nonce", nonce.to_string()), ("next", next.to_string()), ("last", (nonce - 1).to_string())],
+                ));
             } else if nonce < next {
-                out.risks.push(Risk {
-                    severity: Severity::Info,
-                    code: "nonce_replacement".into(),
-                    message: format!("Nonce {nonce} is already used or pending: this replaces (speeds up / cancels) an earlier transaction"),
-                });
+                out.risks.push(Risk::t(Severity::Info, "nonce_replacement", "nonce_replacement", [("nonce", nonce.to_string())]));
             }
         }
     }
@@ -171,6 +200,7 @@ pub async fn enrich(up: &dyn Upstream, read_url: &str, tx: &TxFields, analysis: 
 mod tests {
     use super::*;
     use crate::decode::analyze;
+    use crate::config::SafeConfig;
     use crate::upstream::fake::FakeUpstream;
     use alloy_primitives::{address, Bytes};
 
@@ -227,7 +257,7 @@ mod tests {
             ..Default::default()
         };
         let a = analyze(&tx, &[], 1);
-        let e = enrich(&up, "http://up", &tx, &a).await;
+        let e = enrich(&up, "http://up", 1, &SafeConfig::default(), &tx, &a).await;
         assert!(e.risks.iter().any(|r| r.code == "grantee_is_eoa"));
         assert_eq!(e.token.as_ref().unwrap().symbol.as_deref(), Some("USDC"));
         assert_eq!(e.formatted_args, vec![("amount".to_string(), "1,000 USDC".to_string())]);
@@ -239,7 +269,7 @@ mod tests {
     async fn nonce_ahead_of_account_is_a_gap() {
         let up = chain();
         let tx = TxFields { from: Some(ME), to: Some(EOA), nonce: Some(44), ..Default::default() };
-        let e = enrich(&up, "http://up", &tx, &analyze(&tx, &[], 1)).await;
+        let e = enrich(&up, "http://up", 1, &SafeConfig::default(), &tx, &analyze(&tx, &[], 1)).await;
         assert!(e.risks.iter().any(|r| r.code == "nonce_gap"));
     }
 
@@ -247,8 +277,46 @@ mod tests {
     async fn calldata_to_an_account_without_code_is_flagged() {
         let up = chain();
         let tx = TxFields { to: Some(EOA), input: Bytes::from(vec![1, 2, 3, 4]), ..Default::default() };
-        let e = enrich(&up, "http://up", &tx, &analyze(&tx, &[], 1)).await;
+        let e = enrich(&up, "http://up", 1, &SafeConfig::default(), &tx, &analyze(&tx, &[], 1)).await;
         assert!(e.risks.iter().any(|r| r.code == "call_to_eoa"));
+    }
+
+    #[tokio::test]
+    async fn safe_exec_transaction_is_checked_against_the_chain() {
+        use crate::safe::fixtures;
+        let up = chain(); // USDC is not a Safe: the check says so
+        let input = fixtures::exec_calldata(&fixtures::tx(), &fixtures::signatures());
+        let tx = TxFields { from: Some(ME), to: Some(USDC), input, ..Default::default() };
+        let e = enrich(&up, "http://up", 1, &SafeConfig::default(), &tx, &analyze(&tx, &[], 1)).await;
+        assert!(e.safe.is_some());
+        assert!(e.risks.iter().any(|r| r.code == "safe_unreadable"), "{:?}", e.risks);
+    }
+
+    fn approve_hash_tx(hash: alloy_primitives::B256) -> TxFields {
+        let mut d = hex::decode("d4d9bdcd").unwrap();
+        d.extend_from_slice(hash.as_slice());
+        TxFields { from: Some(ME), to: Some(crate::safe::fixtures::SAFE), input: d.into(), ..Default::default() }
+    }
+
+    #[tokio::test]
+    async fn approve_hash_shows_the_transaction_it_approves() {
+        use crate::safe::fixtures;
+        let up = chain();
+        up.on_get("https://api.safe.global/tx-service/eth/api/v2/multisig-transactions/", crate::safe_service::tests::service_json());
+        let tx = approve_hash_tx(fixtures::SAFE_TX_HASH);
+        let e = enrich(&up, "http://up", 1, &SafeConfig::default(), &tx, &analyze(&tx, &[], 1)).await;
+        let report = e.safe_approval.expect("looked up");
+        assert_eq!(report.analysis.calls.len(), 2);
+        assert!(e.risks.iter().all(|r| r.code != "safe_approve_hash_unknown"), "{:?}", e.risks);
+    }
+
+    #[tokio::test]
+    async fn approve_hash_of_an_unknown_transaction_is_flagged() {
+        let up = chain();
+        let tx = approve_hash_tx(alloy_primitives::B256::repeat_byte(1));
+        let e = enrich(&up, "http://up", 1, &SafeConfig::default(), &tx, &analyze(&tx, &[], 1)).await;
+        assert!(e.safe_approval.is_none());
+        assert!(e.risks.iter().any(|r| r.code == "safe_approve_hash_unknown"), "{:?}", e.risks);
     }
 
     #[test]

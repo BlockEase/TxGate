@@ -1,6 +1,7 @@
 // Display helpers shared across views.
 
 import type { Config, Status } from "./api";
+import { t } from "./i18n";
 
 export function shortAddr(addr: string | null | undefined): string {
   if (!addr) return "—";
@@ -57,21 +58,14 @@ export function elapsed(fromMs: number, nowMs: number): string {
 }
 
 export function networkName(config: Config | undefined, chainId: number): string {
-  return config?.networks.find((n) => n.chain_id === chainId)?.name ?? `Chain ${chainId}`;
+  return config?.networks.find((n) => n.chain_id === chainId)?.name ?? t("format.chain", { id: chainId });
 }
 
-export const STATUS_LABEL: Record<Status, string> = {
-  forwarded: "Forwarded",
-  failed: "Upstream error",
-  invalid: "Invalid",
-  pending: "Awaiting approval",
-  disconnected: "Wallet left · held",
-  approved: "Approved",
-  broadcast_failed: "Broadcast failed",
-  auto_approved: "Auto-approved",
-  rejected: "Rejected",
-  abandoned: "Abandoned",
-};
+export const STATUSES: Status[] = ["forwarded", "failed", "invalid", "pending", "disconnected", "approved", "broadcast_failed", "auto_approved", "rejected", "abandoned"];
+
+export function statusLabel(s: Status): string {
+  return t(`status.${s}`);
+}
 
 export const STATUS_TAG: Record<Status, string> = {
   forwarded: "tag tag-neutral",
