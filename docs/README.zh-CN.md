@@ -73,6 +73,16 @@ Safe 在所有者链下签名之后，用一笔链上的 `execTransaction` 转�
 
 设置（包括明文的 API 密钥）保存在应用配置目录的 `config.toml` 中。请求日志是应用数据目录中的 `txgate.sqlite`，会永久保存。
 
+### macOS：提示“TxGate 已损坏，无法打开”
+
+macOS 版本还没有经过 Apple 签名和公证，所以 macOS 会隔离下载的文件，并提示它已损坏。把 TxGate 移到“应用程序”文件夹后，在终端中清除隔离标记：
+
+```sh
+xattr -cr /Applications/TxGate.app
+```
+
+这会跳过 Apple 对该应用的检查，所以只对从[官方发布页面](https://github.com/BlockEase/TxGate/releases)下载的副本执行。
+
 ## 开发
 
 要求：Rust（stable）、Node.js 20+，以及你操作系统的 [Tauri 前置条件](https://tauri.app/start/prerequisites/)。

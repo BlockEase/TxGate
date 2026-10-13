@@ -73,6 +73,16 @@ When the wallet sends a transaction, TxGate notifies you and opens the approval 
 
 Settings, including API keys in plain text, are stored in `config.toml` in the app config directory. The request log is `txgate.sqlite` in the app data directory and is kept forever.
 
+### macOS: "TxGate is damaged and can't be opened"
+
+The macOS app is not signed or notarized by Apple yet, so macOS quarantines the download and reports it as damaged. Move TxGate to Applications, then clear the quarantine flag in Terminal:
+
+```sh
+xattr -cr /Applications/TxGate.app
+```
+
+This skips Apple's check for this app, so only run it on a copy downloaded from the [official releases page](https://github.com/BlockEase/TxGate/releases).
+
 ## Develop
 
 Requirements: Rust (stable), Node.js 20+, and the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your OS.

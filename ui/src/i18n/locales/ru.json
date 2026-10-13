@@ -274,6 +274,7 @@
   "risk.safe_nonce_queued": "Safe находится на nonce {current}: сначала должны выполниться транзакции {current}–{last}",
   "risk.safe_nonce_queued_one": "Safe находится на nonce {current}: сначала должна выполниться транзакция {last}",
   "risk.safe_nonce_used": "Nonce {nonce} уже использован (Safe на nonce {current}): эта транзакция никогда не выполнится",
+  "risk.safe_official_modules": "Включены официальные модули Safe: {modules}. Каждый действует по своим правилам (UserOperation, подписанные владельцами, лимиты расходов, восстановление через хранителей)",
   "risk.safe_remove_owner": "Удаляет владельца {owner} и устанавливает порог {threshold}",
   "risk.safe_self_call": "Вызывает нераспознанную функцию самого Safe",
   "risk.safe_service_hash_mismatch": "Safe Transaction Service сообщает хеш {reported}, но возвращённые поля дают хеш {computed}: сервис или данные подменены",

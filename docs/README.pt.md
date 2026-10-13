@@ -73,6 +73,16 @@ Quando a carteira envia uma transação, o TxGate avisa-o e abre a janela de apr
 
 As definições, incluindo as chaves de API em texto simples, ficam guardadas em `config.toml` na pasta de configuração da aplicação. O registo de pedidos é `txgate.sqlite` na pasta de dados da aplicação e é guardado para sempre.
 
+### macOS: «O TxGate está danificado e não pode ser aberto»
+
+A app para macOS ainda não está assinada nem notarizada pela Apple, por isso o macOS coloca a transferência em quarentena e indica que está danificada. Mova o TxGate para Aplicações e remova a marca de quarentena no Terminal:
+
+```sh
+xattr -cr /Applications/TxGate.app
+```
+
+Isto ignora a verificação da Apple para esta app, por isso faça-o apenas numa cópia transferida da [página oficial de versões](https://github.com/BlockEase/TxGate/releases).
+
 ## Desenvolvimento
 
 Requisitos: Rust (stable), Node.js 20+ e os [pré-requisitos do Tauri](https://tauri.app/start/prerequisites/) para o seu sistema operativo.

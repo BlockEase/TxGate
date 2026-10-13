@@ -73,6 +73,16 @@ Cuando la billetera envía una transacción, TxGate te avisa y abre la ventana d
 
 Los ajustes, incluidas las claves de API en texto plano, se guardan en `config.toml` en la carpeta de configuración de la aplicación. El registro de solicitudes es `txgate.sqlite` en la carpeta de datos de la aplicación y se conserva para siempre.
 
+### macOS: «TxGate está dañado y no se puede abrir»
+
+La app de macOS todavía no está firmada ni notarizada por Apple, así que macOS pone la descarga en cuarentena y la muestra como dañada. Mueve TxGate a Aplicaciones y elimina la marca de cuarentena en Terminal:
+
+```sh
+xattr -cr /Applications/TxGate.app
+```
+
+Esto omite la comprobación de Apple para esta app, así que hazlo solo con una copia descargada de la [página oficial de versiones](https://github.com/BlockEase/TxGate/releases).
+
 ## Desarrollo
 
 Requisitos: Rust (stable), Node.js 20+ y los [requisitos previos de Tauri](https://tauri.app/start/prerequisites/) para tu sistema operativo.

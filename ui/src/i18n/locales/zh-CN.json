@@ -274,6 +274,7 @@
   "risk.safe_nonce_queued": "Safe 当前在 nonce {current}：交易 {current}–{last} 必须先执行",
   "risk.safe_nonce_queued_one": "Safe 当前在 nonce {current}：交易 {last} 必须先执行",
   "risk.safe_nonce_used": "Nonce {nonce} 已被使用（Safe 当前在 nonce {current}）：这笔交易永远无法执行",
+  "risk.safe_official_modules": "已启用 Safe 官方模块：{modules}。每个模块按其自身规则行事（所有者签名的 UserOperation、支出额度、由守护者恢复）",
   "risk.safe_remove_owner": "移除所有者 {owner}，并把阈值设为 {threshold}",
   "risk.safe_self_call": "调用 Safe 本身一个无法识别的函数",
   "risk.safe_service_hash_mismatch": "Safe Transaction Service 报告的哈希是 {reported}，但它返回的字段算出的哈希是 {computed}：服务或数据已被篡改",
