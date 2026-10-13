@@ -274,6 +274,7 @@
   "risk.safe_nonce_queued": "O Safe está no nonce {current}: as transações {current}–{last} têm de ser executadas primeiro",
   "risk.safe_nonce_queued_one": "O Safe está no nonce {current}: a transação {last} tem de ser executada primeiro",
   "risk.safe_nonce_used": "O nonce {nonce} já foi usado (o Safe está no nonce {current}): esta transação nunca poderá ser executada",
+  "risk.safe_official_modules": "Módulos oficiais do Safe ativados: {modules}. Cada um atua segundo as suas próprias regras (UserOperations assinadas pelos proprietários, limites de gasto, recuperação por guardiões)",
   "risk.safe_remove_owner": "Remove o proprietário {owner} e define o limite para {threshold}",
   "risk.safe_self_call": "Chama uma função não reconhecida no próprio Safe",
   "risk.safe_service_hash_mismatch": "O Safe Transaction Service indica o hash {reported}, mas os campos devolvidos dão o hash {computed}: o serviço ou os dados foram adulterados",

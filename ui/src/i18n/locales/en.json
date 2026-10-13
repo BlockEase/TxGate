@@ -274,6 +274,7 @@
   "risk.safe_nonce_queued": "The Safe is at nonce {current}: transactions {current}–{last} must execute first",
   "risk.safe_nonce_queued_one": "The Safe is at nonce {current}: transaction {last} must execute first",
   "risk.safe_nonce_used": "Nonce {nonce} is already used (the Safe is at nonce {current}): this transaction can never execute",
+  "risk.safe_official_modules": "Official Safe modules enabled: {modules}. Each acts within its own rules (UserOperations signed by the owners, spending allowances, recovery by guardians)",
   "risk.safe_remove_owner": "Removes owner {owner} and sets the threshold to {threshold}",
   "risk.safe_self_call": "Calls an unrecognised function on the Safe itself",
   "risk.safe_service_hash_mismatch": "The Safe Transaction Service reports hash {reported} but the fields it returned hash to {computed}: the service or the data has been tampered with",

@@ -92,6 +92,20 @@ pub const FALLBACK_HANDLERS: &[(Address, &str)] = &[
     (address!("75cf11467937ce3F2f357CE24ffc3DBF8fD5c226"), "Safe4337Module 0.3.0"),
 ];
 
+/// Official Safe modules (safe-modules-deployments).
+pub const OFFICIAL_MODULES: &[(Address, &str)] = &[
+    (address!("a581c4A4DB7175302464fF3C06380BC3270b4037"), "Safe4337Module 0.2.0"),
+    (address!("75cf11467937ce3F2f357CE24ffc3DBF8fD5c226"), "Safe4337Module 0.3.0"),
+    (address!("1Fb403834C911eB98d56E74F5182b0d64C3b3b4D"), "AllowanceModule 0.1.0"),
+    (address!("CFbFaC74C26F8647cBDb8c5caf80BB5b32E43134"), "AllowanceModule 0.1.0"),
+    (address!("AA46724893dedD72658219405185Fb0Fc91e091C"), "AllowanceModule 0.1.1"),
+    (address!("4Aa5Bf7D840aC607cb5BD3249e6Af6FC86C04897"), "SocialRecoveryModule 0.1.0"),
+];
+
+pub fn official_module_name(addr: &Address) -> Option<&'static str> {
+    OFFICIAL_MODULES.iter().find(|(a, _)| a == addr).map(|(_, n)| *n)
+}
+
 pub fn fallback_handler_name(addr: &Address) -> Option<&'static str> {
     FALLBACK_HANDLERS.iter().find(|(a, _)| a == addr).map(|(_, n)| *n)
 }

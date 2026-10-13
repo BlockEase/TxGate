@@ -124,14 +124,14 @@ pub fn state_risks(state: &SafeState) -> Vec<Risk> {
         )),
         (None, _) => risks.push(risk(Severity::Warning, "safe_unknown_implementation", "safe_unreadable_implementation", [])),
     }
-    if !state.modules.is_empty() {
-        let list: Vec<String> = state.modules.iter().map(short).collect();
-        risks.push(risk(
-            Severity::Warning,
-            "safe_modules_enabled",
-            "safe_modules_enabled",
-            [("modules", list.join(", "))],
-        ));
+    let (official, unknown): (Vec<&Address>, Vec<&Address>) = state.modules.iter().partition(|m| crate::safe::official_module_name(m).is_some());
+    if !official.is_empty() {
+        let names: Vec<&str> = official.iter().filter_map(|m| crate::safe::official_module_name(m)).collect();
+        risks.push(risk(Severity::Info, "safe_official_modules", "safe_official_modules", [("modules", names.join(", "))]));
+    }
+    if !unknown.is_empty() {
+        let list: Vec<String> = unknown.iter().map(|m| short(m)).collect();
+        risks.push(risk(Severity::Warning, "safe_modules_enabled", "safe_modules_enabled", [("modules", list.join(", "))]));
     }
     if let Some(g) = state.guard {
         risks.push(risk(Severity::Info, "safe_guard", "safe_guard", [("guard", short(&g))]));
@@ -563,6 +563,26 @@ pub(crate) mod tests {
         let state = read_state(&up, "u", SAFE).await.unwrap();
         assert_eq!(state.module_guard, Some(module_guard));
         assert!(state_risks(&state).iter().any(|r| r.code == "safe_module_guard"), "{:?}", state_risks(&state));
+    }
+
+    #[test]
+    fn official_modules_are_named_and_unknown_ones_warned() {
+        use crate::decode::Severity;
+        use alloy_primitives::address;
+        let safe_4337 = address!("75cf11467937ce3F2f357CE24ffc3DBF8fD5c226");
+        let unknown = Address::repeat_byte(0x33);
+        let mut state = SafeState { singleton: Some(SINGLETONS[3].0), singleton_name: Some("Safe 1.3.0".into()), modules: vec![safe_4337], ..Default::default() };
+        let risks = |s: &SafeState| state_risks(s).into_iter().map(|r| (r.code, r.severity, r.message)).collect::<Vec<_>>();
+
+        let only_official = risks(&state);
+        assert_eq!(only_official.iter().map(|r| (r.0.as_str(), r.1)).collect::<Vec<_>>(), vec![("safe_official_modules", Severity::Info)]);
+        assert!(only_official[0].2.contains("Safe4337Module 0.3.0"), "{}", only_official[0].2);
+
+        state.modules.push(unknown);
+        let mixed = risks(&state);
+        let warning = mixed.iter().find(|r| r.0 == "safe_modules_enabled").expect("unknown module warned");
+        assert_eq!(warning.1, Severity::Warning);
+        assert!(!warning.2.contains("0x75cf"), "only unknown modules are in the warning: {}", warning.2);
     }
 
     #[test]
