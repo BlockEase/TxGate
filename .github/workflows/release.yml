@@ -26,7 +26,7 @@ jobs:
     name: Test
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Linux build dependencies
         run: |
@@ -39,7 +39,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -79,7 +79,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       release: ${{ steps.version.outputs.release }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: version
         run: |
           v=$(node -p "require('./src-tauri/tauri.conf.json').version")
@@ -100,7 +100,7 @@ jobs:
       id: ${{ steps.create.outputs.result }}
     steps:
       - id: create
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           VERSION: ${{ needs.plan.outputs.version }}
         with:
@@ -153,7 +153,7 @@ jobs:
             args: ""
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -169,7 +169,7 @@ jobs:
         with:
           key: ${{ matrix.target || runner.os }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -197,7 +197,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       # Only reached when every platform built: a partial release stays a draft.
-      - uses: actions/github-script@v7
+      - uses: actions/github-script@v8
         env:
           RELEASE_ID: ${{ needs.create-release.outputs.id }}
         with:

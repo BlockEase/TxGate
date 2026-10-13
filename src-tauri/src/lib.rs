@@ -447,6 +447,7 @@ pub fn run() {
         .expect("error while building TxGate")
         .run(|app, event| match event {
             // macOS: clicking the dock icon re-opens the hidden window.
+            #[cfg(target_os = "macos")]
             RunEvent::Reopen { .. } => show_main_window(app),
             RunEvent::ExitRequested { api, .. } => {
                 let state = app.state::<AppState>();
