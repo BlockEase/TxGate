@@ -97,6 +97,10 @@ pub struct TxView {
     /// Chain-state checks; `None` until they finish.
     pub enrichment: Option<Enrichment>,
     pub simulator_url: String,
+    /// ERC-4337: the EntryPoint that calls the smart account (`fields.from`),
+    /// so simulations run with it as the caller.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_point: Option<alloy_primitives::Address>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

@@ -357,6 +357,9 @@ pub struct Analysis {
     /// The decoded Safe transaction when this calls `execTransaction`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safe: Option<Box<SafeExec>>,
+    /// The calls a smart account is asked to make (ERC-4337 / ERC-7579 `execute`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<Box<crate::safe::SafeTxAnalysis>>,
 }
 
 /// Amounts at or above 2^159 are treated as "unlimited": this covers
@@ -392,7 +395,38 @@ fn short_str(addr: &str) -> String {
 ///
 /// `route_chain_id` is the chain the wallet addressed (from the URL path);
 /// `authorizations` are EIP-7702 delegations carried by the transaction.
+/// How many calls deep `analyze` unwraps Safe and smart-account calls. Real
+/// transactions nest two or three levels; a crafted one could nest thousands
+/// and overflow the stack.
+const MAX_NESTING: u32 = 8;
+
+thread_local! {
+    static NESTING: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Counts one level of `analyze` on this thread while alive.
+struct NestingGuard;
+
+impl NestingGuard {
+    fn enter() -> (Self, u32) {
+        let depth = NESTING.with(|n| {
+            let d = n.get();
+            n.set(d + 1);
+            d
+        });
+        (Self, depth)
+    }
+}
+
+impl Drop for NestingGuard {
+    fn drop(&mut self) {
+        NESTING.with(|n| n.set(n.get() - 1));
+    }
+}
+
 pub fn analyze(tx: &TxFields, authorizations: &[Authorization], route_chain_id: u64) -> Analysis {
+    let (_guard, depth) = NestingGuard::enter();
+    let expand = depth < MAX_NESTING;
     let call = decode_call(&tx.input);
     let mut risks = Vec::new();
 
@@ -476,24 +510,34 @@ pub fn analyze(tx: &TxFields, authorizations: &[Authorization], route_chain_id: 
     }
 
     let safe = match tx.to {
-        Some(to) if func == "execTransaction" => analyze_exec(route_chain_id, to, &tx.input).map(Box::new),
+        Some(to) if func == "execTransaction" && expand => analyze_exec(route_chain_id, to, &tx.input).map(Box::new),
         _ => None,
     };
     if let Some(exec) = &safe {
         risks.extend(exec.analysis.risks.iter().cloned());
-    } else if func == "execTransaction" {
+    } else if func == "execTransaction" && expand {
         risks.push(Risk::t::<&str, &str>(Severity::Danger, "safe_malformed_exec", "safe_malformed_exec", []));
     }
 
-    if !tx.input.is_empty() && call.function.is_none() && tx.to.is_some() {
+    let account = match tx.to {
+        Some(to) if call.function.is_none() && expand => crate::account::analyze_account_call(route_chain_id, to, &tx.input).map(Box::new),
+        _ => None,
+    };
+    if !expand && (func == "execTransaction" || call.function.is_none()) && !tx.input.is_empty() {
+        risks.push(Risk::t(Severity::Danger, "nesting_too_deep", "nesting_too_deep", [("depth", MAX_NESTING.to_string())]));
+    }
+    if let Some(a) = &account {
+        risks.extend(a.risks.iter().cloned());
+    } else if !tx.input.is_empty() && call.function.is_none() && tx.to.is_some() {
         risks.push(Risk::t(Severity::Info, "unknown_function", "unknown_function", [("selector", call.selector.clone().unwrap_or_default())]));
     }
 
-    let summary = match &safe {
-        Some(exec) => exec.analysis.summary.clone(),
-        None => summarize(tx, &call),
+    let summary = match (&safe, &account) {
+        (Some(exec), _) => exec.analysis.summary.clone(),
+        (None, Some(a)) => a.summary.clone(),
+        (None, None) => summarize(tx, &call),
     };
-    Analysis { call, risks, summary, safe }
+    Analysis { call, risks, summary, safe, account }
 }
 
 fn summarize(tx: &TxFields, call: &CallInfo) -> String {

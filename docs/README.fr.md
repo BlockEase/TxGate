@@ -8,7 +8,7 @@ TxGate est une application de bureau (macOS, Windows, Linux) qui exécute un poi
 
 - Les **lectures** (`eth_call`, `eth_getBalance`, …) sont transmises à l'upstream de votre choix et affichées en direct.
 - **`eth_estimateGas`** est mis en évidence : cela signifie généralement que le portefeuille va vous demander de signer. TxGate décode l'appel et signale les schémas risqués.
-- Les **méthodes d'envoi** (`eth_sendRawTransaction`, `eth_sendRawTransactionSync`, `eth_sendRawTransactionConditional`, `eth_sendTransaction`, `eth_sendBundle`, `eth_sendPrivateTransaction`) sont **retenues**. Rien n'atteint le réseau tant que vous n'avez pas approuvé la transaction dans TxGate.
+- Les **méthodes d'envoi** (`eth_sendRawTransaction`, `eth_sendRawTransactionSync`, `eth_sendRawTransactionConditional`, `eth_sendTransaction`, `eth_sendBundle`, `eth_sendPrivateTransaction`, `eth_sendPrivateRawTransaction`, `mev_sendBundle`, `personal_sendTransaction`, `eth_sendUserOperation`) sont **retenues**. Rien n'atteint le réseau tant que vous n'avez pas approuvé la transaction dans TxGate.
 
 Ce que montre la fenêtre d'approbation :
 

@@ -628,3 +628,81 @@ async fn a_delegation_added_after_the_estimate_is_a_mismatch() {
     engine.decide(held.id, Decision::Rejected).await.unwrap();
     wallet.await.unwrap();
 }
+
+#[tokio::test]
+async fn other_broadcasting_methods_are_held_until_approved() {
+    let user_op = json!({
+        "sender": "0x4de23f3f0fb3318287378adbde030cf61714b2f3", "nonce": "0x1",
+        "callData": "0xb61d27f6", "signature": "0x"
+    });
+    let cases = [
+        ("eth_sendUserOperation", json!([user_op, "0x0000000071727De22E5E9d8BAf0edAc6f37da032"])),
+        ("eth_sendPrivateRawTransaction", json!([RAW_TX])),
+        ("mev_sendBundle", json!([{"version": "v0.1", "inclusion": {"block": "0x1"}, "body": [{"tx": RAW_TX, "canRevert": false}]}])),
+        ("personal_sendTransaction", json!([{"from": "0x3f5CE5FBFe3E9af3971dD833D26bA9b5C936f0bE", "to": TX_TO}, "hunter2"])),
+    ];
+    for (method, params) in cases {
+        // A fresh engine: an approved signed transaction would be forwarded again without asking.
+        let (engine, up) = setup();
+        up.on(method, json!("0xok"));
+        let e = engine.clone();
+        let body = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
+        let wallet = tokio::spawn(async move { e.handle("1", "w".into(), body).await });
+        let held = wait_pending(&engine, 1).await.remove(0);
+        assert!(up.calls_to(method).is_empty(), "{method} must wait for approval");
+        assert!(!detail(&held).txs.is_empty(), "{method} is shown decoded");
+        assert!(!serde_json::to_string(&held.request).unwrap().contains("hunter2"), "passwords are not logged");
+        engine.decide(held.id, Decision::Approved).await.unwrap();
+        assert_eq!(wallet.await.unwrap()["result"], "0xok", "{method}");
+        assert_eq!(up.calls_to(method).len(), 1);
+        if method == "personal_sendTransaction" {
+            // The node still receives the password it needs.
+            assert_eq!(up.calls_to(method)[0].1["params"][1], "hunter2");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_delegation_inside_a_user_operation_is_flagged() {
+    // EntryPoint v0.8: the bundler applies `eip7702Auth` before running the operation.
+    let (engine, up) = setup();
+    up.on("eth_sendUserOperation", json!("0xok"));
+    let op = json!({
+        "sender": "0x4de23f3f0fb3318287378adbde030cf61714b2f3", "nonce": "0x1",
+        "callData": "0x", "signature": "0x", "eip7702Auth": real_authorization()
+    });
+    let e = engine.clone();
+    let body = json!({"jsonrpc": "2.0", "id": 1, "method": "eth_sendUserOperation", "params": [op, "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108"]});
+    let wallet = tokio::spawn(async move { e.handle("1", "w".into(), body).await });
+    let held = wait_pending(&engine, 1).await.remove(0);
+    let view = detail(&held).txs.remove(0);
+    assert_eq!(view.authorizations.len(), 1);
+    assert_eq!(view.authorizations[0].authority.map(|a| a.to_string().to_lowercase()).as_deref(), Some("0x4de23f3f0fb3318287378adbde030cf61714b2f3"));
+    assert!(view.analysis.risks.iter().any(|r| r.code == "eip7702_delegation"), "{:?}", view.analysis.risks);
+    engine.decide(held.id, Decision::Rejected).await.unwrap();
+    wallet.await.unwrap();
+}
+
+#[tokio::test]
+async fn user_operations_are_simulated_as_the_entry_point_calling_the_account() {
+    let (engine, up) = setup();
+    up.on("eth_sendUserOperation", json!("0xok"));
+    let entry_point = "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
+    let sender = "0x4de23f3f0fb3318287378adbde030cf61714b2f3";
+    let op = json!({"sender": sender, "nonce": "0x1", "callData": "0xb61d27f6", "signature": "0x"});
+    let e = engine.clone();
+    let body = json!({"jsonrpc": "2.0", "id": 1, "method": "eth_sendUserOperation", "params": [op, entry_point]});
+    let wallet = tokio::spawn(async move { e.handle("1", "w".into(), body).await });
+    let held = wait_pending(&engine, 1).await.remove(0);
+    let view = detail(&held).txs.remove(0);
+    // The account only accepts calls from the EntryPoint; simulating it calling
+    // itself would always revert.
+    let url = view.simulator_url.to_lowercase();
+    assert!(url.contains(&format!("from={}", entry_point.to_lowercase())), "{url}");
+    assert!(url.contains(&format!("contractaddress={sender}")), "{url}");
+    let tenderly = txgate_core::simulate::request_body(1, &view.fields, view.entry_point).unwrap();
+    assert_eq!(tenderly["from"].as_str().unwrap().to_lowercase(), entry_point.to_lowercase());
+    assert_eq!(tenderly["to"].as_str().unwrap().to_lowercase(), sender);
+    engine.decide(held.id, Decision::Rejected).await.unwrap();
+    wallet.await.unwrap();
+}

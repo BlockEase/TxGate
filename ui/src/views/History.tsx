@@ -105,6 +105,8 @@ export function History({
     }
   };
 
+  const filtered = Boolean(text.trim() || address.trim() || chain || category || status);
+
   const loadMore = async () => {
     try {
       const r = await api.history(query(rows[rows.length - 1]?.id));
@@ -261,10 +263,10 @@ export function History({
             </>
           ) : (
             <div className="empty">
-              <h4>{t("history.empty")}</h4>
+              <h4>{filtered ? t("history.no_match") : t("history.empty")}</h4>
               <span>
-                {t("history.empty_hint")}{" "}
-                {config.logging.mode === "tx_only" ? t("history.empty_reads") : ""}
+                {filtered ? t("history.no_match_hint") : t("history.empty_hint")}{" "}
+                {!filtered && config.logging.mode === "tx_only" ? t("history.empty_reads") : ""}
               </span>
             </div>
           )}

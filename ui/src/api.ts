@@ -84,6 +84,8 @@ export interface Analysis {
   summary: string;
   /** Present when the transaction calls a Safe's execTransaction. */
   safe?: SafeExec;
+  /** The calls a smart account is asked to make (ERC-4337 / ERC-7579 execute). */
+  account?: SafeTxAnalysis;
 }
 
 // — Safe multisig (mirrors txgate-core safe*.rs) —

@@ -94,10 +94,17 @@ function CallRow({ c, index, numbered }: { c: InnerCall; index: number; numbered
   );
 }
 
-export function SafeCalls({ calls, batch }: { calls: InnerCall[]; batch: string | null }) {
+export function SafeCalls({ calls, batch, account }: { calls: InnerCall[]; batch: string | null; account?: boolean }) {
+  const title = account
+    ? batch
+      ? t("account.does_batch", { count: calls.length, function: batch })
+      : t("account.does")
+    : batch
+      ? t("safe.does_batch", { count: calls.length, library: batch })
+      : t("safe.does");
   return (
     <div className="section">
-      <h6>{batch ? t("safe.does_batch", { count: calls.length, library: batch }) : t("safe.does")}</h6>
+      <h6>{title}</h6>
       {calls.map((c, i) => (
         <CallRow key={i} c={c} index={i} numbered={calls.length > 1} />
       ))}
@@ -153,6 +160,12 @@ export function SafeStateFacts({ state }: { state: SafeState }) {
       ]}
     />
   );
+}
+
+/** The calls a smart account would make (ERC-4337 / ERC-7579). */
+export function AccountSection({ tx }: { tx: TxView }) {
+  const a = tx.analysis.account;
+  return a ? <SafeCalls calls={a.calls} batch={a.batch} account /> : null;
 }
 
 /** Safe details of a decoded `execTransaction` or `approveHash` request. */

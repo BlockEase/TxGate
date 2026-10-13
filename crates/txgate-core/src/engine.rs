@@ -379,7 +379,7 @@ impl Engine {
             tx_hash: None,
             from: None,
             to: None,
-            request: clip(&call.raw),
+            request: clip(&redact_passwords(call)),
             response: None,
             detail: None,
         }
@@ -749,7 +749,7 @@ impl Engine {
             .and_then(|d| d.txs.into_iter().next())
             .ok_or(EngineError::NothingToSimulate(id))?;
         let tenderly = self.0.config.read().tenderly.clone();
-        let outcome = match simulate::simulate(&tenderly, record.chain_id, &tx.fields).await {
+        let outcome = match simulate::simulate(&tenderly, record.chain_id, &tx.fields, tx.entry_point).await {
             Ok(result) => SimulationOutcome::Ok { result, ts_ms: now_ms() },
             Err(e) => SimulationOutcome::Error { message: e.to_string(), ts_ms: now_ms() },
         };
@@ -787,6 +787,17 @@ impl Drop for WaiterGuard {
 
 /// Decodes what a sending call would broadcast. Returns the detail and the key
 /// that identifies the same submission across wallet retries.
+/// The request as logged: node account passwords are replaced.
+fn redact_passwords(call: &Call) -> Value {
+    let mut raw = call.raw.clone();
+    if crate::jsonrpc::PASSWORD_METHODS.contains(&call.method.as_str())
+        && let Some(p) = raw.get_mut("params").and_then(Value::as_array_mut).and_then(|a| a.get_mut(1))
+    {
+        *p = Value::String("<redacted>".into());
+    }
+    raw
+}
+
 fn describe_send(chain_id: u64, payload: &SendPayload) -> (TxDetail, String) {
     let mut detail = TxDetail::default();
     let key = match payload {
@@ -813,6 +824,28 @@ fn describe_send(chain_id: u64, payload: &SendPayload) -> (TxDetail, String) {
             }
             if hashes.len() == 1 { hashes.remove(0) } else { format!("bundle:{}", hashes.join(",")) }
         }
+        SendPayload::UserOperation { op, entry_point } => {
+            // The smart account calls itself with `callData`; its own code then
+            // performs the actual calls.
+            let mut fields = TxFields::from_request(&serde_json::json!({
+                "from": op.get("sender"),
+                "to": op.get("sender"),
+                "data": op.get("callData"),
+                "nonce": op.get("nonce"),
+            }));
+            fields.nonce = None; // A UserOperation nonce is not the account's transaction nonce.
+            // EntryPoint v0.8: the bundler applies this EIP-7702 delegation first.
+            let auths = op
+                .get("eip7702Auth")
+                .map(|a| Authorization::list_from_request(&serde_json::json!({ "authorizationList": [a] })))
+                .unwrap_or_default();
+            let mut view = tx_view(chain_id, None, fields, &auths);
+            view.tx_type = Some("ERC-4337 UserOperation".into());
+            view.entry_point = *entry_point;
+            view.simulator_url = web_simulator_url(chain_id, &view.fields, *entry_point);
+            detail.txs.push(view);
+            format!("userop:{chain_id}:{}", keccak256(op.to_string().as_bytes()))
+        }
         SendPayload::Unsigned(obj) => {
             detail.txs.push(tx_view(chain_id, None, TxFields::from_request(obj), &Authorization::list_from_request(obj)));
             format!("unsigned:{chain_id}:{}", keccak256(obj.to_string().as_bytes()))
@@ -835,13 +868,14 @@ fn tx_view(chain_id: u64, hash: Option<String>, fields: TxFields, auths: &[Autho
     TxView {
         hash,
         tx_type: None,
-        simulator_url: web_simulator_url(chain_id, &fields),
+        simulator_url: web_simulator_url(chain_id, &fields, None),
         fields,
         max_fee_per_gas: None,
         max_priority_fee_per_gas: None,
         authorizations: auths.to_vec(),
         analysis,
         enrichment: None,
+        entry_point: None,
     }
 }
 

@@ -6,7 +6,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { api, errorText, type Config, type RequestRecord } from "../api";
 import { elapsed, eth, gwei, networkName, shortAddr, tenderlyReady } from "../format";
-import { SafeSection } from "./SafeParts";
+import { AccountSection, SafeSection } from "./SafeParts";
 import { allRisks, Authorizations, Effects, Params, PreviewNote, RiskList, tokenSymbols, useSimulate } from "./TxParts";
 import { t } from "../i18n";
 
@@ -206,6 +206,7 @@ export function ApprovalDialog({
           />
         )}
         {tx && <Authorizations tx={tx} />}
+        {tx && <AccountSection tx={tx} />}
         {tx && <SafeSection tx={tx} />}
         {tx && <Params tx={tx} />}
         {detail && detail.txs.length > 1 && (

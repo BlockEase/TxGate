@@ -11,7 +11,16 @@ pub const SEND_METHODS: &[&str] = &[
     "eth_sendTransaction",
     "eth_sendBundle",
     "eth_sendPrivateTransaction",
+    "eth_sendPrivateRawTransaction",
+    "mev_sendBundle",
+    "personal_sendTransaction",
+    // ERC-4337: smart-account wallets submit signed UserOperations to a bundler,
+    // often on the same provider endpoint.
+    "eth_sendUserOperation",
 ];
+
+/// Methods whose second parameter is the node account's password.
+pub const PASSWORD_METHODS: &[&str] = &["personal_sendTransaction"];
 
 pub const ESTIMATE_METHOD: &str = "eth_estimateGas";
 
@@ -102,6 +111,8 @@ pub enum SendPayload {
     Signed(Vec<Bytes>),
     /// An unsigned transaction object (`eth_sendTransaction`), signed by the node.
     Unsigned(Value),
+    /// An ERC-4337 UserOperation, which `entry_point` executes on the smart account `sender`.
+    UserOperation { op: Value, entry_point: Option<alloy_primitives::Address> },
 }
 
 /// Extracts the transaction(s) from a sending call.
@@ -112,7 +123,7 @@ pub fn send_payload(call: &Call) -> Result<SendPayload, String> {
         s.parse::<Bytes>().map_err(|e| format!("invalid transaction hex: {e}"))
     };
     match call.method.as_str() {
-        "eth_sendRawTransaction" | "eth_sendRawTransactionSync" | "eth_sendRawTransactionConditional" => {
+        "eth_sendRawTransaction" | "eth_sendRawTransactionSync" | "eth_sendRawTransactionConditional" | "eth_sendPrivateRawTransaction" => {
             Ok(SendPayload::Signed(vec![hex_tx(first)?]))
         }
         "eth_sendPrivateTransaction" => {
@@ -127,7 +138,21 @@ pub fn send_payload(call: &Call) -> Result<SendPayload, String> {
             }
             Ok(SendPayload::Signed(txs))
         }
-        "eth_sendTransaction" => Ok(SendPayload::Unsigned(first.clone())),
+        "mev_sendBundle" => {
+            // Entries are signed transactions ({tx}) or hashes of other bundles ({hash}).
+            let body = first.get("body").and_then(Value::as_array).ok_or("missing params[0].body")?;
+            let txs = body.iter().filter_map(|b| b.get("tx")).map(hex_tx).collect::<Result<Vec<_>, _>>()?;
+            if txs.is_empty() {
+                return Err("bundle has no transactions".into());
+            }
+            Ok(SendPayload::Signed(txs))
+        }
+        "eth_sendTransaction" | "personal_sendTransaction" => Ok(SendPayload::Unsigned(first.clone())),
+        "eth_sendUserOperation" => {
+            first.get("sender").and_then(Value::as_str).ok_or("missing params[0].sender")?;
+            let entry_point = call.param(1).and_then(Value::as_str).and_then(|s| s.parse().ok());
+            Ok(SendPayload::UserOperation { op: first.clone(), entry_point })
+        }
         other => Err(format!("{other} is not a sending method")),
     }
 }

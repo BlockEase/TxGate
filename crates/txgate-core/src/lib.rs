@@ -1,6 +1,7 @@
 //! TxGate core: a JSON-RPC proxy that forwards wallet traffic to user-configured
 //! upstreams and holds every transaction-sending call until the user approves it.
 
+pub mod account;
 pub mod config;
 pub mod decode;
 pub mod jsonrpc;

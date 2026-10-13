@@ -8,7 +8,7 @@ TxGate is a desktop app (macOS, Windows, Linux) that runs a local Ethereum JSON-
 
 - **Reads** (`eth_call`, `eth_getBalance`, …) are forwarded to the upstream you choose and shown live.
 - **`eth_estimateGas`** is highlighted: it usually means the wallet is about to ask you to sign. TxGate decodes the call and flags risky patterns.
-- **Sending methods** (`eth_sendRawTransaction`, `eth_sendRawTransactionSync`, `eth_sendRawTransactionConditional`, `eth_sendTransaction`, `eth_sendBundle`, `eth_sendPrivateTransaction`) are **held**. Nothing reaches the network until you approve the transaction in TxGate.
+- **Sending methods** (`eth_sendRawTransaction`, `eth_sendRawTransactionSync`, `eth_sendRawTransactionConditional`, `eth_sendTransaction`, `eth_sendBundle`, `eth_sendPrivateTransaction`, `eth_sendPrivateRawTransaction`, `mev_sendBundle`, `personal_sendTransaction`, `eth_sendUserOperation`) are **held**. Nothing reaches the network until you approve the transaction in TxGate.
 
 What the approval dialog shows:
 

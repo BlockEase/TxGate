@@ -1,7 +1,9 @@
-# Every push to main is tested. When the tests pass and the app version
+# Every push to main is tested, in BlockEase/TxGate and in every fork.
+# Only in BlockEase/TxGate, when the tests pass and the app version
 # (src-tauri/tauri.conf.json) has no release yet, installers are built for
 # Windows, macOS (Apple silicon and Intel) and Linux and published as
 # release v<version>. To ship a new release, raise the version and push.
+# Forks never release.
 
 name: Test and release
 
@@ -81,10 +83,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - id: version
+        env:
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
         run: |
           v=$(node -p "require('./src-tauri/tauri.conf.json').version")
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          if git ls-remote --exit-code --tags origin "refs/tags/v$v" > /dev/null; then
+          if [ "$REPO" != "BlockEase/TxGate" ] || [ "$REF" != "refs/heads/main" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Tests only: releases are published from the main branch of BlockEase/TxGate, not $REPO ($REF)."
+          elif git ls-remote --exit-code --tags origin "refs/tags/v$v" > /dev/null; then
             echo "release=false" >> "$GITHUB_OUTPUT"
             echo "::notice::v$v is already released; raise the version in src-tauri/tauri.conf.json to publish a new one."
           else

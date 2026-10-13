@@ -5,7 +5,7 @@ import { Fragment, useState, type ReactNode } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Config, RequestRecord } from "../api";
 import { clock, copyText, dateTime, eth, gwei, networkName, shortAddr, statusLabel, STATUS_TAG, tenderlyReady } from "../format";
-import { SafeSection } from "./SafeParts";
+import { AccountSection, SafeSection } from "./SafeParts";
 import { allRisks, Authorizations, Effects, Params, PreviewNote, RiskList, tokenSymbols, useSimulate } from "./TxParts";
 import { t } from "../i18n";
 
@@ -78,6 +78,7 @@ export function RecordPanel({
           />
           {record.category === "send" && <PreviewNote preview={detail?.preview ?? null} />}
           <Authorizations tx={tx} />
+          <AccountSection tx={tx} />
           <SafeSection tx={tx} />
           <Params tx={tx} />
           <Effects outcome={detail?.simulation ?? null} onSimulate={simulate} busy={busy} canSimulate={tenderlyReady(config)} tokenSymbols={tokenSymbols(tx)} />

@@ -8,7 +8,7 @@ TxGate 是一个桌面应用（macOS、Windows、Linux），在本机运行一�
 
 - **读取请求**（`eth_call`、`eth_getBalance` 等）会转发到你选择的上游节点，并实时显示。
 - **`eth_estimateGas`** 会被突出显示：这通常意味着钱包马上要请你签名。TxGate 会解码该调用并标记有风险的模式。
-- **发送类方法**（`eth_sendRawTransaction`、`eth_sendRawTransactionSync`、`eth_sendRawTransactionConditional`、`eth_sendTransaction`、`eth_sendBundle`、`eth_sendPrivateTransaction`）会被**拦截**。在你于 TxGate 中批准之前，任何内容都不会发送到网络上。
+- **发送类方法**（`eth_sendRawTransaction`、`eth_sendRawTransactionSync`、`eth_sendRawTransactionConditional`、`eth_sendTransaction`、`eth_sendBundle`、`eth_sendPrivateTransaction`、`eth_sendPrivateRawTransaction`、`mev_sendBundle`、`personal_sendTransaction`、`eth_sendUserOperation`）会被**拦截**。在你于 TxGate 中批准之前，任何内容都不会发送到网络上。
 
 审批窗口会显示：
 

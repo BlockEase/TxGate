@@ -8,7 +8,7 @@ TxGate è un'app desktop (macOS, Windows, Linux) che esegue un endpoint JSON-RPC
 
 - Le **letture** (`eth_call`, `eth_getBalance`, …) vengono inoltrate all'upstream che scegli e mostrate in tempo reale.
 - **`eth_estimateGas`** viene evidenziato: di solito significa che il wallet sta per chiederti di firmare. TxGate decodifica la chiamata e segnala gli schemi rischiosi.
-- I **metodi di invio** (`eth_sendRawTransaction`, `eth_sendRawTransactionSync`, `eth_sendRawTransactionConditional`, `eth_sendTransaction`, `eth_sendBundle`, `eth_sendPrivateTransaction`) vengono **trattenuti**. Nulla raggiunge la rete finché non approvi la transazione in TxGate.
+- I **metodi di invio** (`eth_sendRawTransaction`, `eth_sendRawTransactionSync`, `eth_sendRawTransactionConditional`, `eth_sendTransaction`, `eth_sendBundle`, `eth_sendPrivateTransaction`, `eth_sendPrivateRawTransaction`, `mev_sendBundle`, `personal_sendTransaction`, `eth_sendUserOperation`) vengono **trattenuti**. Nulla raggiunge la rete finché non approvi la transazione in TxGate.
 
 Cosa mostra la finestra di approvazione:
 
